@@ -1,0 +1,19 @@
+# hidden folders
+.git/
+.idea/
+.ipynb_checkpoints/
+.venv/
+__pycache__/
+*.egg-info/
+documents/
+# files and documents
+/config.json
+/poetry.lock
+/miscel*.*
+/*.ipynb
+uv.lock
+# Mac
+.DS_Store
+
+# Windows
+Thumbs.db
