@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "docintel"
+version = "0.5.0"
+description = "Document text extraction (digital / OCR / VLM / auto) and LLM field extraction (get_fields)"
+requires-python = ">=3.10"
+dependencies = [
+  "pypdfium2>=4.30",
+  "pdfplumber>=0.11",
+  "python-docx>=1.1",
+  "pillow>=10",
+  "numpy",
+  "litellm>=1.50",
+  "rapidocr>=3.0",
+  "onnxruntime>=1.17",  # rapidocr does not declare a runtime backend itself
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "reportlab>=4"]  # reportlab only builds test PDFs
+
+[tool.setuptools.packages.find]
+include = ["docintel*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
