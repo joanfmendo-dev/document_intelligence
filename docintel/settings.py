@@ -25,47 +25,49 @@ class Settings:
     OLLAMA_NUM_CTX = int(os.getenv("DOCINTEL_OLLAMA_NUM_CTX", "8192"))
     OLLAMA_KEEP_ALIVE = os.getenv("DOCINTEL_OLLAMA_KEEP_ALIVE", "10m")
 
-    # JSON Formats
-    db_json_format = {
-                      "record_id": "SYNUS-2026-0001",
-                      "department": "Cardiology",
-                      "patient_name": "Jennifer Parker",
-                      "dob": "1961-01-28T00:00:00",
-                      "age": 63,
-                      "sex": "Female",
-                      "insurance": "Aetna PPO",
-                      "city": "Miami, Florida",
-                      "encounter_date": "2025-01-01T09:00:00",
-                      "chief_complaint": "Chest pressure and exertional dyspnea.",
-                      "history_of_present_illness": "The patient reports 5 days of substernal pressure that worsens with exertion and improves with rest. Mild diaphoresis and nausea are present, but there is no syncope.",
-                      "past_medical_history": "Hypertension, hyperlipidemia, former smoker.",
-                      "medications": "Atorvastatin, lisinopril, aspirin.",
-                      "allergies": "NKDA.",
-                      "vital_signs": {
-                        "blood_pressure": "158/95 mmHg",
-                        "heart_rate": "101 bpm",
-                        "respiration_rate": "23/min",
-                        "temperature": "99.4 °F",
-                        "sp02": "98%"
-                      },
-                      "physical_exam": "Mild distress, regular tachycardia, and no focal neurologic deficits.",
-                      "lab_results": [
-                        {"test_name": "Troponin I (initial)", "result": "0.042 ng/mL", "flag": "Borderline"},
-                        {"test_name": "WBC Count", "result": "5.6 K/uL", "flag": "Normal"},
-                        {"test_name": "Hemoglobin", "result": "14.3 g/dL", "flag": "Normal"},
-                        {"test_name": "Platelets", "result": "181 K/uL", "flag": "Normal"},
-                        {"test_name": "Sodium", "result": "138 mmol/L", "flag": "Normal"},
-                        {"test_name": "Potassium", "result": "4.3 mmol/L", "flag": "Normal"},
-                        {"test_name": "BUN", "result": "12 mg/dL", "flag": "Normal"},
-                        {"test_name": "Creatinine", "result": "0.87 mg/dL", "flag": "Normal"},
-                        {"test_name": "Glucose", "result": "97 mg/dL", "flag": "Normal"}
-                      ],
-                      "imaging_results": "ECG with nonspecific ST-T changes; chest X-ray without acute infiltrate.",
-                      "final_diagnosis": "Possible acute coronary syndrome / NSTEMI versus demand ischemia.",
-                      "plan": "Telemetry admission, serial troponins, cardiology consultation, aspirin, and risk stratification.",
-                      "progress_notes": "Ongoing chest pain surveillance with biomarker trending."
-                    }
-    DB_JSON_FORMAT = os.getenv("DOCINTEL_DB_JSON_FORMAT", db_json_format)
+    # local DuckDB file where RecordDB keeps the records that get_fields returns
+    DB_PATH = os.getenv("DOCINTEL_DB_PATH", "medical_records.duckdb")
 
+    #JSON Templates
+    DB_JSON_TEMPLATE = {
+        "record_id": "SYNUS-2026-0001",
+        "department": "Cardiology",
+        "patient_name": "Jennifer Parker",
+        "dob": "1961-01-28T00:00:00",
+        "age": 63,
+        "sex": "Female",
+        "insurance": "Aetna PPO",
+        "city": "Miami, Florida",
+        "encounter_date": "2025-01-01T09:00:00",
+        "chief_complaint": "Chest pressure and exertional dyspnea.",
+        "history_of_present_illness": "The patient reports 5 days of substernal pressure that worsens with exertion and improves with rest. Mild diaphoresis and nausea are present, but there is no syncope.",
+        "past_medical_history": "Hypertension, hyperlipidemia, former smoker.",
+        "medications": "Atorvastatin, lisinopril, aspirin.",
+        "allergies": "NKDA.",
+        "vital_signs": {
+            "blood_pressure": "158/95 mmHg",
+            "heart_rate": "101 bpm",
+            "respiration_rate": "23/min",
+            "temperature": "99.4 °F",
+            "sp02": "98%"
+        },
+        "physical_exam": "Mild distress, regular tachycardia, and no focal neurologic deficits.",
+        "lab_results": [
+            {"test_name": "Troponin I (initial)", "result": "0.042 ng/mL", "flag": "Borderline"},
+            {"test_name": "WBC Count", "result": "5.6 K/uL", "flag": "Normal"},
+            {"test_name": "Hemoglobin", "result": "14.3 g/dL", "flag": "Normal"},
+            {"test_name": "Platelets", "result": "181 K/uL", "flag": "Normal"},
+            {"test_name": "Sodium", "result": "138 mmol/L", "flag": "Normal"},
+            {"test_name": "Potassium", "result": "4.3 mmol/L", "flag": "Normal"},
+            {"test_name": "BUN", "result": "12 mg/dL", "flag": "Normal"},
+            {"test_name": "Creatinine", "result": "0.87 mg/dL", "flag": "Normal"},
+            {"test_name": "Glucose", "result": "97 mg/dL", "flag": "Normal"}
+        ],
+        "imaging_results": "ECG with nonspecific ST-T changes; chest X-ray without acute infiltrate.",
+        "final_diagnosis": "Possible acute coronary syndrome / NSTEMI versus demand ischemia.",
+        "plan": "Telemetry admission, serial troponins, cardiology consultation, aspirin, and risk stratification.",
+        "progress_notes": "Ongoing chest pain surveillance with biomarker trending."
+    }
+    DB_JSON_TEMPLATE = os.getenv("DB_JSON_TEMPLATE", DB_JSON_TEMPLATE)
 
 s = Settings()

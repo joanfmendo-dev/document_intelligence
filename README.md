@@ -58,7 +58,31 @@ get_fields(text, json_format, instructions=(
     "'age' and 'sex' come from the 'AGE / SEX' label."))
 ```
 
-## 3. Modelos: un solo lugar (`docintel/settings.py`, `docintel/llm.py`)
+## 3. Base de datos local: `RecordDB` (`docintel/db.py`)
+Guarda en un archivo **DuckDB** el diccionario que devuelve `get_fields` y lo lee de vuelta con el mismo formato.
+La tabla `medical_records` tiene las mismas 21 columnas, en el mismo orden, que `medical_records.xlsx`: fechas
+`TIMESTAMP`, `age` `INTEGER`, `vital_signs` y `lab_results` `JSON`, el resto `VARCHAR`. Solo `record_id` es obligatorio
+(clave primaria); lo que el documento no da queda en `NULL`.
+
+```python
+from docintel import RecordDB, get_fields
+
+with RecordDB("medical_records.duckdb") as db:           # por defecto DOCINTEL_DB_PATH
+    db.create_record(get_fields(text, json_format))       # RecordExistsError si el record_id ya existe
+    db.update_record(get_fields(text2, json_format))      # RecordNotFoundError si no existe
+    db.read_record("SYNUS-2026-0571")                     # dict como el de get_fields, o None
+    db.delete_record("SYNUS-2026-0571")                   # True si existía
+    db.import_excel("medical_records.xlsx")               # carga inicial (necesita openpyxl)
+```
+- `create_record` y `update_record` devuelven el registro tal como quedó guardado.
+- `update_record` solo toca las claves que recibe. Por defecto, un valor que `get_fields` da por ausente (`None`,
+  `[]` o un objeto con todo en `None`) **no borra** lo guardado: un documento nuevo que no menciona un campo no
+  debe borrarlo. Con `keep_existing=False` se escribe todo tal cual, `None` incluido (así se limpia un valor).
+  `vital_signs` y `lab_results` se reemplazan completos, no se mezclan clave por clave.
+- Las claves que no son columnas (p. ej. `facility` en vez de `department`) lanzan `ValueError`, no se descartan.
+- DuckDB permite que un solo proceso abra el archivo para escribir a la vez.
+
+## 4. Modelos: un solo lugar (`docintel/settings.py`, `docintel/llm.py`)
 Todo acceso a modelos pasa por `LLM` (sobre **litellm**) y `TokenCount`, como en tu ejemplo.
 Los modelos se nombran al estilo litellm; cambiar de proveedor es cambiar una cadena:
 

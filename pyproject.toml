@@ -16,10 +16,13 @@ dependencies = [
   "litellm>=1.50",
   "rapidocr>=3.0",
   "onnxruntime>=1.17",  # rapidocr does not declare a runtime backend itself
+  "duckdb>=1.0",
+  "openpyxl>=3.1",
+  "pytest>=8"
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "reportlab>=4"]  # reportlab only builds test PDFs
+dev = ["reportlab>=4"]
 
 [tool.setuptools.packages.find]
 include = ["docintel*"]

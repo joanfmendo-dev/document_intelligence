@@ -12,6 +12,7 @@ documents/
 /miscel*.*
 /*.ipynb
 uv.lock
+medical_records.duckdb
 # Mac
 .DS_Store
 
