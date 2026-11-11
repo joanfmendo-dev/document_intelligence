@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Base de datos · DocBase{% endblock %}
+{% block main_attrs %}{{ ' inert' if confirm }}{% endblock %}
+{% block content %}
+<div class="row"><div><h1>Base de datos</h1><p class="sub">{{ total }} registro{{ 's' if total != 1 }}{% if q or d %} que coinciden{% endif %}</p></div><a class="btn pri" href="/cargar">Cargar documento</a></div>
+<form method="get" action="/registros" class="filters">
+<div><label for="q">Buscar por paciente o ID</label><input id="q" name="q" type="search" value="{{ q }}"></div>
+<div><label for="d">Departamento</label><select id="d" name="d"><option value="">Todos</option>{% for x in departments %}<option{{ ' selected' if x == d }}>{{ x }}</option>{% endfor %}</select></div>
+<div><button class="btn" type="submit">Filtrar</button></div>
+</form>
+<div class="card scroll"><table>
+<thead><tr><th scope="col">ID de registro</th><th scope="col">Paciente</th><th scope="col">Departamento</th><th scope="col">Fecha</th><th scope="col">Diagnóstico final</th><th scope="col">Acciones</th></tr></thead>
+<tbody>
+{% for r in rows %}<tr><td class="nw">{{ r.record_id }}</td><td>{{ r.patient_name or '—' }}</td><td>{{ r.department or '—' }}</td><td class="nw">{{ (r.encounter_date or '')[:10] or '—' }}</td><td>{{ r.final_diagnosis or '—' }}</td>
+<td class="nw"><div class="actions"><a class="btn" href="/registros/{{ r.record_id|urlencode }}/editar" aria-label="Editar {{ r.record_id }}">Editar</a><a class="btn dan-o" href="/registros/{{ r.record_id|urlencode }}/eliminar{{ '?' ~ keep if keep }}" aria-label="Eliminar {{ r.record_id }}">Eliminar</a></div></td></tr>
+{% else %}<tr><td colspan="6">No hay registros{% if q or d %} que coincidan con la búsqueda{% endif %}.</td></tr>{% endfor %}
+</tbody></table></div>
+<nav class="row" aria-label="Paginación"><p class="sub" style="margin:0">{% if total %}Mostrando {{ start }}–{{ end }} de {{ total }}{% endif %}</p>
+<div class="actions">{% if prev_url %}<a class="btn" href="{{ prev_url }}">Anterior</a>{% endif %}{% if next_url %}<a class="btn" href="{{ next_url }}">Siguiente</a>{% endif %}</div></nav>
+{% endblock %}
+{% block after %}{% if confirm %}
+<div class="scrim"><section class="card dlg" role="dialog" aria-modal="true" aria-labelledby="t">
+<h2 id="t" style="margin-top:0">¿Eliminar el registro {{ confirm.id }}?</h2>
+<p>Se borrarán los datos de {{ confirm.patient or 'este paciente' }}{% if confirm.document %} y el documento original {{ confirm.document }}{% endif %}. Esta acción no se puede deshacer.</p>
+<form method="post" action="/registros/{{ confirm.id|urlencode }}/eliminar">
+<input type="hidden" name="q" value="{{ q }}"><input type="hidden" name="d" value="{{ d }}"><input type="hidden" name="page" value="{{ page if page > 1 else '' }}">
+<div class="actions"><a class="btn" href="{{ here }}" data-cancel autofocus>Cancelar</a><button class="btn dan" type="submit">Eliminar definitivamente</button></div>
+</form></section></div>
+{% endif %}{% endblock %}

@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Edit {{ record_id }} · DocBase{% endblock %}
+{% block content %}
+<p class="sub"><a href="/records">Database</a> / {{ record_id }}</p>
+<h1>Edit record</h1>
+<form method="post" action="/records/{{ record_id|urlencode }}/edit" novalidate>
+{% include "_errors.html" %}
+{% include "_form.html" %}
+<div class="row"><a class="btn dan-o" href="/records/{{ record_id|urlencode }}/delete">Delete record</a><div class="actions"><a class="btn" href="/records">Cancel</a><button class="btn pri" type="submit">Save changes</button></div></div>
+</form>
+{% endblock %}

@@ -18,11 +18,21 @@ dependencies = [
   "onnxruntime>=1.17",  # rapidocr does not declare a runtime backend itself
   "duckdb>=1.0",
   "openpyxl>=3.1",
+  "fastapi>=0.110",
+  "uvicorn>=0.29",
+  "jinja2>=3.1",
+  "python-multipart>=0.0.9",
   "pytest>=8"
 ]
 
 [project.optional-dependencies]
-dev = ["reportlab>=4"]
+dev = ["reportlab>=4", "httpx>=0.27"]  # reportlab builds test PDFs; httpx is the web tests' client
+
+[project.scripts]
+docintel-web = "docintel.web.__main__:main"
+
+[tool.setuptools.package-data]
+"docintel.web" = ["templates/*.html", "static/*"]
 
 [tool.setuptools.packages.find]
 include = ["docintel*"]

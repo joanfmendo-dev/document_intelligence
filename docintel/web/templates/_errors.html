@@ -1,0 +1,4 @@
+{% if errors %}
+<div class="err" role="alert"><strong>Check {{ errors|length }} field{{ 's' if errors|length != 1 }} before saving:</strong>
+<ul>{% for name, message in errors.items() %}<li><a href="#f-{{ name|replace('.', '-') }}">{{ label_of(name) }}</a>: {{ message }}</li>{% endfor %}</ul></div>
+{% endif %}

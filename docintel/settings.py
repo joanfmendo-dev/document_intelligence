@@ -28,6 +28,11 @@ class Settings:
     # local DuckDB file where RecordDB keeps the records that get_fields returns
     DB_PATH = os.getenv("DOCINTEL_DB_PATH", "medical_records.duckdb")
 
+    # web app (docintel.web): where an uploaded file waits while its fields are reviewed (deleted once the record is
+    # saved or the upload cancelled), and the largest upload accepted
+    UPLOADS_DIR = os.getenv("DOCINTEL_UPLOADS_DIR", "uploads")
+    MAX_UPLOAD_MB = int(os.getenv("DOCINTEL_MAX_UPLOAD_MB", "25"))
+
     #JSON Templates
     DB_JSON_TEMPLATE = {
         "record_id": "SYNUS-2026-0001",

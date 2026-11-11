@@ -157,3 +157,57 @@ def test_import_excel_is_all_or_nothing(db, tmp_path):
     make_xlsx(tmp_path / "hdr.xlsx", [], header=bad_header)
     with pytest.raises(ValueError, match="department"):
         db.import_excel(tmp_path / "hdr.xlsx")
+
+
+# ---------------------------------------------------------------- listing
+def seed(db, n=30):
+    for i in range(n):
+        db.create_record({**RECORD, "record_id": f"SYNUS-2026-{i:04d}", "patient_name": f"Patient {i:02d}",
+                          "department": "Cardiology" if i % 3 else "Oncology",
+                          "encounter_date": f"2026-01-{i + 1:02d}T09:00:00", "final_diagnosis": f"Dx {i}"})
+
+
+def test_list_records_pages_newest_first(db):
+    seed(db)
+    rows, total = db.list_records(limit=10)
+    assert total == 30 and [r["record_id"] for r in rows][:2] == ["SYNUS-2026-0029", "SYNUS-2026-0028"]
+    assert list(rows[0]) == ["record_id", "patient_name", "department", "encounter_date", "final_diagnosis"]
+    assert rows[0]["encounter_date"] == "2026-01-30T09:00:00"
+    last, _ = db.list_records(limit=10, offset=20)
+    assert [r["record_id"] for r in last][-1] == "SYNUS-2026-0000" and len(last) == 10
+    assert db.list_records(limit=10, offset=30) == ([], 30)
+
+
+def test_list_records_filters(db):
+    seed(db)
+    assert db.list_records(search="patient 07")[1] == 1
+    assert db.list_records(search="2026-0012")[0][0]["record_id"] == "SYNUS-2026-0012"      # by id, any case
+    assert db.list_records(search="synus-2026-001")[1] == 10
+    assert db.list_records(department="Oncology")[1] == 10
+    assert db.list_records(search="patient", department="Oncology")[1] == 10
+    assert db.list_records(search="patient 07", department="Oncology")[1] == 0               # 7 % 3 != 0
+    assert db.list_records(search="nobody") == ([], 0)
+
+
+def test_list_records_search_is_literal(db):
+    seed(db, 3)
+    db.create_record({"record_id": "X-1", "patient_name": "100% sure_1"})
+    assert [r["record_id"] for r in db.list_records(search="100%")[0]] == ["X-1"]
+    assert [r["record_id"] for r in db.list_records(search="_1")[0]] == ["X-1"]              # '_' is not a wildcard
+    assert db.list_records(search="%")[1] == 1 and db.list_records(search="\\")[1] == 0
+
+
+def test_list_records_nulls_and_empty(db):
+    assert db.list_records() == ([], 0)
+    db.create_record({"record_id": "A-1"})
+    db.create_record({"record_id": "A-2", "encounter_date": "2026-01-01T00:00:00"})
+    assert [r["record_id"] for r in db.list_records()[0]] == ["A-2", "A-1"]                  # no date goes last
+    assert db.list_records()[0][1]["patient_name"] is None
+
+
+def test_departments(db):
+    assert db.departments() == []
+    seed(db, 4)
+    db.create_record({"record_id": "NO-DEPT"})
+    db.create_record({"record_id": "BLANK", "department": ""})
+    assert db.departments() == ["Cardiology", "Oncology"]

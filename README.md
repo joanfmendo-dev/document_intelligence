@@ -96,10 +96,36 @@ Los modelos se nombran al estilo litellm; cambiar de proveedor es cambiar una ca
 Ejemplo con una API comercial: `DOCINTEL_LLM_MODEL=openai/gpt-4o-mini` y `DOCINTEL_LLM_API_KEY=...`.
 `TokenCount.totals()` da los tokens de la sesión; `TokenCount.print(in, out)` e `reset()` como en tu ejemplo.
 
+## 5. Aplicativo web: DocBase (`docintel/web/`)
+Prototipo local para cargar documentos, revisar los campos extraídos y mantener la base de datos. La interfaz está en inglés.
+
+```powershell
+python -m docintel.web          # http://127.0.0.1:8000   (--port 8080 para otro puerto)
+```
+Necesita Ollama corriendo con el modelo de `settings.py` (el mismo que usa `get_fields`).
+
+| Pantalla | Qué hace |
+|---|---|
+| **Upload document** (`/upload`) | Arrastra o elige un archivo (PDF, .docx, imágenes, .txt). Corre `extract_auto` → `get_fields(s.DB_JSON_TEMPLATE)` en segundo plano, con el avance en pantalla. Luego el usuario **edita todos los campos detectados** con el **documento original al lado** (interruptor "Show original document") y guarda con `RecordDB.create_record`. El documento solo existe durante esa revisión. |
+| **Database** (`/records`) | Lista paginada (25 por página), búsqueda por paciente o ID, filtro por departamento. |
+| **Edit** (`/records/<id>/edit`) | Mismo formulario, sin visor (no hay documento). Guarda con `update_record(..., keep_existing=False)`: un campo que el usuario vacía se borra. El ID no se puede cambiar. |
+| **Delete** | Confirmación; borra el registro. |
+
+- Los valores que `find_ungrounded` no encuentra en el texto salen marcados en ámbar hasta que el usuario los cambia.
+- Si el ID ya existe, la app pregunta antes de reemplazarlo (casilla "Replace the existing record").
+- **No se guardan los documentos originales**: el archivo cargado espera en `uploads/` (`DOCINTEL_UPLOADS_DIR`) solo mientras se revisa,
+  y se borra al guardar o cancelar (y la carpeta se vacía al arrancar la app). En la base solo quedan los datos.
+- El visor (solo en la revisión) usa el visor de PDF del navegador; un .docx no se puede mostrar y se ofrece como descarga.
+- Ajustes: `DOCINTEL_DB_PATH`, `DOCINTEL_UPLOADS_DIR`, `DOCINTEL_MAX_UPLOAD_MB` (25).
+- **Sin usuarios ni contraseña**: solo escucha en `127.0.0.1` (rechaza otro `--host`), valida el `Host` y el `Origin` de los
+  POST, y no deja páginas en la caché del navegador. Antes de desplegarlo en la nube hace falta autenticación.
+- DuckDB deja abrir el archivo para escribir a un solo proceso: cierra notebooks u otras copias de la app que lo usen.
+- Las cargas en curso viven en memoria: si reinicias la app se pierden las que no se guardaron.
+
 ## Instalación
 ```powershell
 python -m venv .venv ; .\.venv\Scripts\Activate.ps1
-pip install -e ".[dev]"     # incluye litellm (trae ~35 paquetes); `pytest` corre los tests
+pip install -e ".[dev]"     # incluye litellm (trae ~35 paquetes); `pytest` corre los tests; la app web también
 ollama pull gemma3:4b       # para get_fields
 ollama pull qwen3-vl:8b     # solo si usas extract_vlm
 ```
@@ -121,3 +147,4 @@ ollama pull qwen3-vl:8b     # solo si usas extract_vlm
   en varias imágenes se leen por tiras. Las imágenes de un DOCX no se procesan; tampoco sus tablas anidadas ni las celdas combinadas verticalmente (repiten el texto).
 - Los saltos de párrafo del OCR dependen de un umbral (`GAP_FACTOR` en `_entries.py`): mueve líneas en blanco, no contenido.
 - La confianza del OCR no se devuelve.
+- La app web no se ha probado con un modelo real (Ollama no estaba disponible): el flujo se probó con OCR real y un modelo simulado, y el camino de error con el pipeline real.

@@ -1,0 +1,20 @@
+{# One labelled control. Imported "with context": it reads values, errors and flags from the page. #}
+{% macro control(name, label, kind='text', rows=2, full=False, readonly=False, hint='') -%}
+{%- set id = 'f-' ~ name|replace('.', '-') -%}
+{%- set err = errors.get(name) -%}
+{%- set flagged = name in flags and not err -%}
+{%- set note = err or ('Not found in the document. Compare it with the original.' if flagged else hint) -%}
+{%- set aria = (' aria-describedby="' ~ id ~ '-h"' if note else '') ~ (' aria-invalid="true"' if err else '') -%}
+<div class="{{ 'full' if full }}{{ ' flag' if flagged }}">
+<label for="{{ id }}">{{ label }}</label>
+{% if kind == 'textarea' -%}
+<textarea id="{{ id }}" name="{{ name }}" rows="{{ rows }}"{{ aria|safe }}>{{ values[name] }}</textarea>
+{%- elif kind == 'select' -%}
+{%- set current = values[name] -%}
+<select id="{{ id }}" name="{{ name }}"{{ aria|safe }}>{% for c in [''] + SEX_CHOICES|list + ([current] if current and current not in SEX_CHOICES else []) %}<option value="{{ c }}"{{ ' selected' if c == current }}>{{ c or '(not given)' }}</option>{% endfor %}</select>
+{%- else -%}
+<input id="{{ id }}" name="{{ name }}" value="{{ values[name] }}"{{ ' readonly' if readonly }}{{ ' inputmode="numeric"' if kind == 'number' }}{{ ' placeholder="YYYY-MM-DD HH:MM"' if kind == 'datetime' }}{{ aria|safe }}>
+{%- endif %}
+{% if note %}<p class="hint{{ ' bad' if err }}{{ ' mute' if not err and not flagged }}" id="{{ id }}-h">{{ note }}</p>{% endif %}
+</div>
+{%- endmacro %}

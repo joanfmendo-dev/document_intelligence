@@ -122,6 +122,33 @@ class RecordDB:
         row = self.con.execute(f"SELECT {', '.join(COLUMNS)} FROM {TABLE} WHERE record_id = ?", [record_id]).fetchone()
         return None if row is None else {c: _from_db(c, v) for c, v in zip(COLUMNS, row)}
 
+    def list_records(self, *, search: str = "", department: str = "", limit: int = 25, offset: int = 0) -> tuple[list[dict], int]:
+        """One page of summaries for a listing, and how many records match in total.
+
+        `search` matches the record_id or the patient name (any part, any case); `department` must match exactly.
+        Newest encounters first. Each summary has record_id, patient_name, department, encounter_date (ISO text,
+        like read_record) and final_diagnosis; use read_record for everything else."""
+        where, params = [], []
+        if search.strip():
+            like = "%" + search.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+            where.append("(record_id ILIKE ? ESCAPE '\\' OR patient_name ILIKE ? ESCAPE '\\')")
+            params += [like, like]
+        if department:
+            where.append("department = ?")
+            params.append(department)
+        clause = f" WHERE {' AND '.join(where)}" if where else ""
+        total = self.con.execute(f"SELECT count(*) FROM {TABLE}{clause}", params).fetchone()[0]
+        cols = ("record_id", "patient_name", "department", "encounter_date", "final_diagnosis")
+        rows = self.con.execute(
+            f"SELECT {', '.join(cols)} FROM {TABLE}{clause} ORDER BY encounter_date DESC NULLS LAST, record_id LIMIT ? OFFSET ?",
+            params + [max(limit, 0), max(offset, 0)]).fetchall()
+        return [{c: _from_db(c, v) for c, v in zip(cols, row)} for row in rows], total
+
+    def departments(self) -> list[str]:
+        """The distinct departments stored, sorted: the choices for a filter."""
+        return [r[0] for r in self.con.execute(
+            f"SELECT DISTINCT department FROM {TABLE} WHERE department IS NOT NULL AND department <> '' ORDER BY 1").fetchall()]
+
     # ------------------------------------------------------------ update
     def update_record(self, fields: dict, *, keep_existing: bool = True) -> dict:
         """Update the record `fields["record_id"]` with the result of get_fields; return it as stored.

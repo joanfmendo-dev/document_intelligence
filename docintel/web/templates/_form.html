@@ -1,0 +1,29 @@
+{# The fields of a record, in the order of the document. Needs: values, errors, flags, mode. #}
+{% from "_fields.html" import control with context %}
+{% macro lab_list(col) %}{% if col == 'test_name' %} list="lab-tests" autocomplete="off"{% elif col == 'flag' %} list="lab-flags" autocomplete="off"{% endif %}{% endmacro %}
+<section class="card">
+<h2 style="margin-top:0">Patient and encounter</h2>
+<div class="grid">{% for f in PATIENT %}{{ control(f.name, f.label, f.kind, f.rows, f.full, readonly=(mode == 'edit' and f.name == 'record_id'), hint=('The ID cannot be changed.' if mode == 'edit' and f.name == 'record_id' else 'Required.' if f.name == 'patient_name' else 'Calculated from the date of birth and the encounter date.' if f.name == 'age' else '')) }}{% endfor %}</div>
+<h2>Medical history</h2>
+<div class="grid">{% for f in HISTORY %}{{ control(f.name, f.label, f.kind, f.rows, f.full) }}{% endfor %}</div>
+<h2>Vital signs</h2>
+<div class="grid">{% for key, label in VITALS.items() %}{{ control('vital_signs.' ~ key, label) }}{% endfor %}</div>
+<h2>Physical exam</h2>
+<div class="grid">{% for f in EXAM %}{{ control(f.name, f.label, f.kind, f.rows, f.full) }}{% endfor %}</div>
+<h2>Lab results</h2>
+<p class="sub" style="margin-top:-6px">Pick a suggested test or flag from the list, or type your own value.</p>
+<table class="lab" style="min-width:0">
+<thead><tr>{% for label in LAB_COLUMNS.values() %}<th scope="col">{{ label }}</th>{% endfor %}<th scope="col"><span class="vh">Actions</span></th></tr></thead>
+<tbody data-lab-rows>
+{% for row in values.labs %}{% set i = loop.index0 %}
+<tr>{% for col, label in LAB_COLUMNS.items() %}{% set path = 'lab_results[' ~ i ~ '].' ~ col %}<td class="{{ 'flag' if path in flags }}"><input aria-label="{{ label }}" name="lab_{{ col }}" value="{{ row[col] }}"{{ lab_list(col)|safe }}>{% if path in flags %}<p class="hint">Not found in the document.</p>{% endif %}</td>{% endfor %}
+<td><button class="btn dan-o" type="button" data-remove-lab aria-label="Remove lab result {{ loop.index }}">Remove</button></td></tr>
+{% endfor %}
+</tbody>
+</table>
+<template id="lab-row"><tr>{% for col, label in LAB_COLUMNS.items() %}<td><input aria-label="{{ label }}" name="lab_{{ col }}"{{ lab_list(col)|safe }}></td>{% endfor %}<td><button class="btn dan-o" type="button" data-remove-lab aria-label="Remove lab result">Remove</button></td></tr></template>
+<datalist id="lab-tests">{% for x in LAB_TESTS %}<option value="{{ x }}">{% endfor %}</datalist><datalist id="lab-flags">{% for x in LAB_FLAGS %}<option value="{{ x }}">{% endfor %}</datalist>
+<p style="margin:12px 0 0"><button class="btn" type="button" data-add-lab>Add lab result</button></p>
+<h2>Imaging, diagnosis and plan</h2>
+<div class="grid">{% for f in FINAL %}{{ control(f.name, f.label, f.kind, f.rows, f.full) }}{% endfor %}</div>
+</section>

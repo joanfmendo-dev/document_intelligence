@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Database · DocBase{% endblock %}
+{% block main_attrs %}{{ ' inert' if confirm }}{% endblock %}
+{% block content %}
+<div class="row"><div><h1>Database</h1><p class="sub">{{ total }} record{{ 's' if total != 1 }}{% if q or d %} found{% endif %}</p></div><a class="btn pri" href="/upload">Upload document</a></div>
+<form method="get" action="/records" class="filters">
+<div><label for="q">Search by patient or ID</label><input id="q" name="q" type="search" value="{{ q }}"></div>
+<div><label for="d">Department</label><select id="d" name="d"><option value="">All</option>{% for x in departments %}<option{{ ' selected' if x == d }}>{{ x }}</option>{% endfor %}</select></div>
+<div><label for="n">Records per page</label><select id="n" name="n" data-autosubmit>{% for x in page_sizes %}<option{{ ' selected' if x == per_page }}>{{ x }}</option>{% endfor %}</select></div>
+<div><button class="btn" type="submit">Filter</button></div>
+</form>
+<div class="card scroll"><table>
+<thead><tr><th scope="col">Record ID</th><th scope="col">Patient</th><th scope="col">Department</th><th scope="col">Date</th><th scope="col">Final diagnosis</th><th scope="col">Actions</th></tr></thead>
+<tbody>
+{% for r in rows %}<tr><td class="nw">{{ r.record_id }}</td><td>{{ r.patient_name or '—' }}</td><td>{{ r.department or '—' }}</td><td class="nw">{{ (r.encounter_date or '')[:10] or '—' }}</td><td>{{ r.final_diagnosis or '—' }}</td>
+<td class="nw"><div class="actions"><a class="btn" href="/records/{{ r.record_id|urlencode }}/edit" aria-label="Edit {{ r.record_id }}">Edit</a><a class="btn dan-o" href="/records/{{ r.record_id|urlencode }}/delete{{ '?' ~ keep if keep }}" aria-label="Delete {{ r.record_id }}">Delete</a></div></td></tr>
+{% else %}<tr><td colspan="6">No records{% if q or d %} match your search{% endif %}.</td></tr>{% endfor %}
+</tbody></table></div>
+<nav class="row" aria-label="Pagination"><p class="sub" style="margin:0">{% if total %}Showing {{ start }}–{{ end }} of {{ total }}{% endif %}</p>
+<div class="actions">{% if first_url %}<a class="btn" href="{{ first_url }}" aria-label="First page">« First</a><a class="btn" href="{{ prev_url }}">Previous</a>{% endif %}{% if pages > 1 %}<span class="sub" style="margin:0;align-self:center">Page {{ page }} of {{ pages }}</span>{% endif %}{% if next_url %}<a class="btn" href="{{ next_url }}">Next</a><a class="btn" href="{{ last_url }}" aria-label="Last page">Last »</a>{% endif %}</div></nav>
+{% endblock %}
+{% block after %}{% if confirm %}
+<div class="scrim"><section class="card dlg" role="dialog" aria-modal="true" aria-labelledby="t">
+<h2 id="t" style="margin-top:0">Delete record {{ confirm.id }}?</h2>
+<p>The data of {{ confirm.patient or 'this patient' }} will be deleted. This cannot be undone.</p>
+<form method="post" action="/records/{{ confirm.id|urlencode }}/delete">
+<input type="hidden" name="q" value="{{ q }}"><input type="hidden" name="d" value="{{ d }}"><input type="hidden" name="n" value="{{ per_page if per_page != 25 else '' }}"><input type="hidden" name="page" value="{{ page if page > 1 else '' }}">
+<div class="actions"><a class="btn" href="{{ here }}" data-cancel autofocus>Cancel</a><button class="btn dan" type="submit">Delete permanently</button></div>
+</form></section></div>
+{% endif %}{% endblock %}

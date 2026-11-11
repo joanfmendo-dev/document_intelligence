@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Upload document · DocBase{% endblock %}
+{% block head %}{% if job and job.running %}<meta http-equiv="refresh" content="2">{% endif %}{% endblock %}
+{% block wide %}{{ ' wide' if job and job.step == 'done' }}{% endblock %}
+{% block content %}
+<h1>Upload document</h1>
+<p class="sub">Upload a file from your computer. Its text is read and the fields are extracted so you can review them before saving.</p>
+{% if error %}<p class="err" role="alert">{{ error }}</p>{% endif %}
+<form method="post" action="/upload" enctype="multipart/form-data">
+<section class="card drop{{ ' compact' if job }}" data-dropzone aria-label="Upload area">
+<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#2457D6" stroke-width="1.6" aria-hidden="true"><path d="M12 16V4m0 0L8 8m4-4 4 4M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"></path></svg>
+<div><p class="big">Drag a file here</p><p class="sub">PDF, Word (.docx), images or text · {{ max_mb }} MB maximum</p></div>
+<input class="vh" type="file" id="file" name="file" accept="{{ accept }}"><label class="btn pri" for="file">Choose file</label>
+<noscript><button class="btn" type="submit">Upload</button></noscript>
+</section>
+</form>
+{% if job %}
+<div class="rev">
+<section class="card" aria-label="Uploaded file">
+<div class="row"><div><strong>{{ job.filename }}</strong>{% if pages %}<span class="sub" style="margin:0 0 0 12px">{{ pages }} page{{ 's' if pages != 1 }}</span>{% endif %}</div>{% include "_toggle.html" %}</div>
+<ol class="steps">{% for label, state in steps %}<li>{{ label }}<b class="{{ {'done': 'done', 'failed': 'bad'}.get(state, 'wait') }}">{{ state }}</b></li>{% endfor %}</ol>
+{% if job.running %}
+<div class="row" style="margin-top:12px"><p class="sub" role="status" style="margin:0">This can take a minute; the page refreshes by itself.</p>
+<form method="post" action="/upload/{{ job.id }}/cancel"><button class="btn" type="submit">Cancel</button></form></div>
+{% elif job.step == 'error' %}
+<p class="err" role="alert" style="margin-bottom:12px"><strong>The document could not be processed.</strong><br><code>{{ job.error }}</code></p>
+<form method="post" class="actions"><button class="btn" type="submit" formaction="/upload/{{ job.id }}/cancel">Cancel</button><button class="btn pri" type="submit" formaction="/upload/{{ job.id }}/retry">Try again</button></form>
+{% endif %}
+</section>
+{% if job.step == 'done' %}
+<form method="post" action="/upload/{{ job.id }}/save" novalidate>
+<div class="split{{ '' if viewer else ' solo' }}"><div class="ed">
+{% include "_errors.html" %}
+{% if not errors and flagged_labels %}<p class="warn" style="margin-top:0">{{ flagged_labels|length }} value{{ 's' if flagged_labels|length != 1 }} {{ 'were' if flagged_labels|length != 1 else 'was' }} not found in the document: {{ flagged_labels|join(', ') }}. Check {{ 'them' if flagged_labels|length != 1 else 'it' }} before saving; you can compare with the original document.</p>{% endif %}
+{% include "_form.html" %}
+{% if conflict or replace %}<label class="chk"><input type="checkbox" name="replace"{{ ' checked' if replace }}><span>Replace the existing record: all of its data is overwritten.</span></label>{% endif %}
+<div class="actions"><button class="btn" type="submit" formaction="/upload/{{ job.id }}/cancel" formnovalidate>Cancel</button><button class="btn pri" type="submit">Save to the database</button></div>
+</div>
+{% include "_viewer.html" %}
+</div>
+</form>
+{% endif %}
+</div>
+{% endif %}
+{% endblock %}

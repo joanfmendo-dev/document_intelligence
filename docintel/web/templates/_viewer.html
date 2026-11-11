@@ -1,0 +1,11 @@
+{% if viewer %}
+<aside class="card doc" aria-label="Original document">
+<div class="doc-h"><div class="ttl"><strong>Original document</strong><p class="sub">{{ viewer.name }}</p></div><a class="btn" href="{{ viewer.url }}" target="_blank" rel="noopener">Open in a new tab</a></div>
+<div class="doc-body">
+{% if viewer.kind == 'pdf' %}<iframe src="{{ viewer.url }}#view=FitH" title="Original document {{ viewer.name }}"></iframe>
+{% elif viewer.kind == 'text' %}<iframe class="txt" src="{{ viewer.url }}" title="Original document {{ viewer.name }}"></iframe>
+{% elif viewer.kind == 'image' %}<img src="{{ viewer.url }}" alt="Original document {{ viewer.name }}">
+{% else %}<div class="nopreview"><p>This file type cannot be shown here.</p><a class="btn" href="{{ viewer.url }}">Download {{ viewer.name }}</a></div>{% endif %}
+</div>
+</aside>
+{% endif %}
