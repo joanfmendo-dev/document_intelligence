@@ -18,13 +18,14 @@ from typing import Callable
 from urllib.parse import urlencode, urlsplit
 
 from fastapi import Depends, FastAPI, File, Request, UploadFile
-from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.datastructures import FormData
 from starlette.exceptions import HTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.templating import Jinja2Templates
 
+from ..data_transformation import ICD10
 from ..db import RecordDB, RecordExistsError, RecordNotFoundError
 from ..settings import s
 from . import forms, pipeline as default_pipeline
@@ -35,7 +36,7 @@ HERE = Path(__file__).parent
 PAGE_SIZE = 25  # the default; the user can pick another from PAGE_SIZES
 PAGE_SIZES = (20, 25, 50, 100)
 LOCAL_HOSTS = ["localhost", "127.0.0.1", "[::1]"]
-STEP_LABELS = ["Reading the text (OCR on images)", "Extracting the fields", "Review and save"]
+STEP_LABELS = ["Reading the text (OCR on images)", "Extracting the fields", "Assigning the ICD-10 code", "Review and save"]
 FLASH = {"saved": "Record {id} saved.", "updated": "Changes to {id} saved.", "deleted": "Record {id} deleted."}
 
 
@@ -68,7 +69,7 @@ def create_app(*, db_path: str | Path | None = None, uploads_dir: str | Path | N
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts or LOCAL_HOSTS)
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
     templates = Jinja2Templates(directory=HERE / "templates")
-    templates.env.globals.update(PATIENT=forms.PATIENT, HISTORY=forms.HISTORY, EXAM=forms.EXAM, FINAL=forms.FINAL, VITALS=forms.VITALS,
+    templates.env.globals.update(PATIENT=forms.PATIENT, ICD=forms.ICD, HISTORY=forms.HISTORY, EXAM=forms.EXAM, FINAL=forms.FINAL, VITALS=forms.VITALS,
                                  LAB_COLUMNS=forms.LAB_COLUMNS, LAB_TESTS=forms.LAB_TESTS, LAB_FLAGS=forms.LAB_FLAGS, SEX_CHOICES=forms.SEX_CHOICES, label_of=forms.label_of)
 
     @app.middleware("http")
@@ -110,7 +111,7 @@ def create_app(*, db_path: str | Path | None = None, uploads_dir: str | Path | N
 
     # ------------------------------------------------------------ upload a document
     def steps_of(job) -> list[tuple[str, str]]:
-        order = ["reading", "extracting", "done"]
+        order = ["reading", "extracting", "coding", "done"]
         failed = job.step == "error"
         current = order.index(job.failed_in if failed else job.step)
         state = lambda i: "done" if i < current else ("failed" if failed else "in progress") if i == current else "pending"
@@ -130,7 +131,7 @@ def create_app(*, db_path: str | Path | None = None, uploads_dir: str | Path | N
         flagged = [p for p in job.extraction.ungrounded if now.get(p) == then.get(p)]
         review = dict(values=values, errors=errors or {}, flags=set(flagged), flagged_labels=[forms.label_of(p) for p in flagged],
                       viewer={"url": f"/upload/{job.id}/document", "kind": kind_of(job.path), "name": job.filename},
-                      pages=job.extraction.pages, mode="upload", replace=False, conflict=False)
+                      pages=job.extraction.pages, notice=job.extraction.notice, mode="upload", replace=False, conflict=False)
         return upload_context(job, **{**review, **extra})
 
     @app.get("/")
@@ -244,6 +245,12 @@ def create_app(*, db_path: str | Path | None = None, uploads_dir: str | Path | N
             deleted = db.delete_record(record_id)
         keep = {k: form.get(k) for k in ("q", "d", "n", "page") if form.get(k)}
         return go("/records?" + urlencode({**keep, "ok": "deleted" if deleted else "", "id": record_id}))
+
+    @app.get("/icd10")
+    def icd10_lookup(code: str = ""):
+        """The chapter and category of a code, for the form to show while the user types it ({} if it is not a code)."""
+        coding = ICD10.resolve(code)
+        return JSONResponse(coding._asdict() if coding else {})
 
     # ------------------------------------------------------------ edit a record
     def edit_context(record_id: str, values: dict, errors: dict) -> dict:

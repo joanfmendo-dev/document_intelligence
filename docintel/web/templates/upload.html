@@ -31,6 +31,7 @@
 <form method="post" action="/upload/{{ job.id }}/save" novalidate>
 <div class="split{{ '' if viewer else ' solo' }}"><div class="ed">
 {% include "_errors.html" %}
+{% if notice %}<p class="warn" style="margin-top:0">{{ notice }}</p>{% endif %}
 {% if not errors and flagged_labels %}<p class="warn" style="margin-top:0">{{ flagged_labels|length }} value{{ 's' if flagged_labels|length != 1 }} {{ 'were' if flagged_labels|length != 1 else 'was' }} not found in the document: {{ flagged_labels|join(', ') }}. Check {{ 'them' if flagged_labels|length != 1 else 'it' }} before saving; you can compare with the original document.</p>{% endif %}
 {% include "_form.html" %}
 {% if conflict or replace %}<label class="chk"><input type="checkbox" name="replace"{{ ' checked' if replace }}><span>Replace the existing record: all of its data is overwritten.</span></label>{% endif %}

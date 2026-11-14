@@ -18,6 +18,7 @@ dependencies = [
   "onnxruntime>=1.17",  # rapidocr does not declare a runtime backend itself
   "duckdb>=1.0",
   "openpyxl>=3.1",
+  "simple-icd-10>=2.0",  # the ICD-10 ontology (offline): validates codes, gives chapter and category
   "fastapi>=0.110",
   "uvicorn>=0.29",
   "jinja2>=3.1",

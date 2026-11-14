@@ -20,14 +20,14 @@ class Job:
     id: str
     filename: str  # as the user named it
     path: Path  # where the upload is
-    step: str = "reading"  # reading -> extracting -> done | error
+    step: str = "reading"  # reading -> extracting -> coding -> done | error
     failed_in: str = ""  # the step that was running when it failed
     extraction: Extraction | None = None
     error: str = ""
 
     @property
     def running(self) -> bool:
-        return self.step in ("reading", "extracting")
+        return self.step in ("reading", "extracting", "coding")
 
 
 class Jobs:

@@ -44,6 +44,22 @@
     update();
   }
 
+  // ICD-10: the chapter and category follow the code while it is typed (the server looks them up again when saving).
+  const icdBox = document.querySelector('[data-icd10]');
+  if (icdBox) {
+    const code = document.getElementById('f-icd10_code'), chapter = document.getElementById('f-icd10_chapter'), category = document.getElementById('f-icd10_category');
+    let last = 0;
+    code.addEventListener('change', async () => {
+      const ticket = ++last;
+      let found = {};
+      try { found = await (await fetch('/icd10?code=' + encodeURIComponent(code.value))).json(); } catch (error) { return; }
+      if (ticket !== last) return;  // a newer lookup is under way
+      chapter.value = found.chapter || '';
+      category.value = found.category || '';
+      if (found.code) code.value = found.code;
+    });
+  }
+
   // Esc closes the delete dialog (it is the "Cancelar" link).
   const cancel = document.querySelector('[data-cancel]');
   if (cancel) document.addEventListener('keydown', event => { if (event.key === 'Escape') location.href = cancel.href; });

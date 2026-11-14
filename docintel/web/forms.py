@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from ..data_transformation import ICD10
 from ..db import COLUMNS
 
 
@@ -23,6 +24,7 @@ class Field:
     kind: str = "text"  # text | textarea | number | datetime | select
     rows: int = 2
     full: bool = False
+    readonly: bool = False  # derived from other fields: shown, not typed
 
 
 PATIENT = [
@@ -41,7 +43,11 @@ FINAL = [
     Field("imaging_results", "Imaging results", "textarea"), Field("final_diagnosis", "Final diagnosis", "textarea"),
     Field("plan", "Plan", "textarea"), Field("progress_notes", "Progress notes", "textarea"),
 ]
-SCALARS = PATIENT + HISTORY + EXAM + FINAL
+ICD = [  # the code is typed (or comes from the classifier); chapter and category always follow it
+    Field("icd10_code", "ICD-10 code"), Field("icd10_chapter", "ICD-10 chapter", readonly=True, full=True),
+    Field("icd10_category", "ICD-10 category", readonly=True, full=True),
+]
+SCALARS = PATIENT + HISTORY + EXAM + FINAL + ICD
 VITALS = {"blood_pressure": "Blood pressure", "heart_rate": "Heart rate",
           "respiration_rate": "Respiration rate", "temperature": "Temperature", "sp02": "SpO2"}
 LAB_COLUMNS = {"test_name": "Test", "result": "Result", "flag": "Flag"}
@@ -151,6 +157,15 @@ def parse(values: dict) -> tuple[dict, dict[str, str]]:
         else:
             fields["age"] = age_on(fields["dob"], fields["encounter_date"])
             errors.pop("age", None)
+    if fields["icd10_code"]:  # chapter and category are looked up from the code: what was posted for them is ignored
+        coding = ICD10.resolve(fields["icd10_code"])
+        if coding:
+            fields.update(zip(ICD10.FIELDS, coding))
+        else:
+            fields["icd10_chapter"] = fields["icd10_category"] = None
+            errors["icd10_code"] = "Not a valid ICD-10 code. Use a category or subcategory such as J44 or I21.9."
+    else:
+        fields["icd10_chapter"] = fields["icd10_category"] = None
     if not fields["record_id"]:
         errors.setdefault("record_id", "The record ID is required.")
     elif not RECORD_ID.match(fields["record_id"]):

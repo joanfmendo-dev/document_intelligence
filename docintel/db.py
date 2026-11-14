@@ -4,7 +4,8 @@
     db.create_record(get_fields(text, json_format))
     db.read_record("SYNUS-2026-0571")      # -> a dict shaped exactly like get_fields' result
 
-The table has the same 21 columns, in the same order, as medical_records.xlsx. Dates are TIMESTAMP,
+The table has the same 24 columns, in the same order, as medical_records.xlsx (the last three are the ICD-10 coding:
+icd10_code, icd10_chapter, icd10_category; a file created before they existed gets them added when it is opened). Dates are TIMESTAMP,
 `age` is INTEGER, `vital_signs` and `lab_results` are JSON (the Excel stores them as JSON text too),
 everything else is VARCHAR. Only `record_id` is required (it is the primary key): the other columns
 accept NULL, because a document may not give every field.
@@ -12,6 +13,7 @@ accept NULL, because a document may not give every field.
 from __future__ import annotations
 
 import json
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -28,7 +30,9 @@ COLUMNS = {  # name -> DuckDB type; the order is the Excel's
     "past_medical_history": "VARCHAR", "medications": "VARCHAR", "allergies": "VARCHAR",
     "vital_signs": "JSON", "physical_exam": "VARCHAR", "lab_results": "JSON", "imaging_results": "VARCHAR",
     "final_diagnosis": "VARCHAR", "plan": "VARCHAR", "progress_notes": "VARCHAR",
+    "icd10_code": "VARCHAR", "icd10_chapter": "VARCHAR", "icd10_category": "VARCHAR",
 }
+ICD10_COLUMNS = ("icd10_code", "icd10_chapter", "icd10_category")  # not in the first version of the Excel: import_excel accepts it without them
 _DATES = {"dob", "encounter_date"}
 _JSON = {"vital_signs", "lab_results"}
 
@@ -89,6 +93,8 @@ class RecordDB:
         self.path = str(path or s.DB_PATH)
         self.con = duckdb.connect(self.path)
         self.con.execute(f"CREATE TABLE IF NOT EXISTS {TABLE} ({', '.join(f'{c} {t}' for c, t in COLUMNS.items())})")
+        for column in ICD10_COLUMNS:  # a database made before the ICD-10 columns existed: add them (existing rows get NULL)
+            self.con.execute(f"ALTER TABLE {TABLE} ADD COLUMN IF NOT EXISTS {column} {COLUMNS[column]}")
 
     def close(self) -> None:
         self.con.close()
@@ -101,7 +107,7 @@ class RecordDB:
 
     # ------------------------------------------------------------ create
     def _insert_sql(self) -> str:
-        return f"INSERT INTO {TABLE} VALUES ({', '.join(_placeholder(c) for c in COLUMNS)})"
+        return f"INSERT INTO {TABLE} ({', '.join(COLUMNS)}) VALUES ({', '.join(_placeholder(c) for c in COLUMNS)})"
 
     def _insert_params(self, fields: dict) -> list:
         return [_to_db(c, fields.get(c)) for c in COLUMNS]
@@ -144,6 +150,11 @@ class RecordDB:
             params + [max(limit, 0), max(offset, 0)]).fetchall()
         return [{c: _from_db(c, v) for c, v in zip(cols, row)} for row in rows], total
 
+    def icd10_rows(self) -> list[dict]:
+        """For every record: record_id, final_diagnosis, chief_complaint and the three ICD-10 fields (see docintel.data_transformation.ICD10)."""
+        cols = ("record_id", "final_diagnosis", "chief_complaint") + ICD10_COLUMNS
+        return [dict(zip(cols, row)) for row in self.con.execute(f"SELECT {', '.join(cols)} FROM {TABLE} ORDER BY record_id").fetchall()]
+
     def departments(self) -> list[str]:
         """The distinct departments stored, sorted: the choices for a filter."""
         return [r[0] for r in self.con.execute(
@@ -181,10 +192,27 @@ class RecordDB:
                                      [record_id]).fetchall())
 
     # ------------------------------------------------------------ load the Excel
-    def import_excel(self, path: str | Path, sheet: str | None = None) -> int:
+    def import_excel(self, path: str | Path, sheet: str | None = None, *, update_icd: bool = False,
+                     icd_mode: str = "missing", icd_output: str | Path | None = None) -> int:
         """Load every row of an Excel sheet (default: the first one) into the table; returns how many.
-        The header must have exactly the table's columns. All rows go in one transaction: if one fails
+
+        update_icd=True first runs ICD10.update_icd10 on the Excel (docintel.data_transformation), so the records are stored with
+        their ICD-10 coding. icd_mode="missing" (default) codes only the records that lack it; "all" recodes every record.
+        icd_output is the Excel to write the updated sheet to (may be `path` itself); without it the updated sheet is only
+        used for the import and your Excel is left untouched. If the coding fails, nothing is imported.
+
+        The header must have the table's columns (the three ICD-10 ones may be missing, as in the first version of the
+        Excel). Blank ICD-10 cells, and the 0 that some tools write in them, are stored as NULL. All rows go in one transaction: if one fails
         (e.g. a record_id that is already stored), none is added. Needs openpyxl."""
+        if icd_output and not update_icd:
+            raise ValueError("icd_output is only used with update_icd=True")
+        if update_icd:
+            from .data_transformation import ICD10  # imported here: that module needs this one
+
+            with tempfile.TemporaryDirectory() as tmp:
+                updated = Path(icd_output) if icd_output else Path(tmp) / "updated.xlsx"
+                ICD10().update_icd10(path, updated, mode=icd_mode, sheet=sheet)
+                return self.import_excel(updated, sheet)
         try:
             from openpyxl import load_workbook
         except ImportError as exc:
@@ -194,14 +222,16 @@ class RecordDB:
         try:
             rows = (book[sheet] if sheet else book.worksheets[0]).iter_rows(values_only=True)
             header = list(next(rows))
-            if set(header) != set(COLUMNS):
-                raise ValueError(f"the header does not match the table. Missing: {sorted(set(COLUMNS) - set(header))}; "
-                                 f"extra: {sorted(set(header) - set(COLUMNS))}")
+            missing, extra = set(COLUMNS) - set(header) - set(ICD10_COLUMNS), set(header) - set(COLUMNS)
+            if missing or extra:
+                raise ValueError(f"the header does not match the table. Missing: {sorted(missing)}; extra: {sorted(extra)}")
             params = []
             for row in rows:
                 record = {c: (None if v == "" else v) for c, v in zip(header, row)}
                 for c in _JSON & set(record):  # the Excel keeps these as JSON text
                     record[c] = json.loads(record[c]) if isinstance(record[c], str) else record[c]
+                for c in ICD10_COLUMNS:
+                    record[c] = record[c].strip() or None if isinstance(record.get(c), str) else None
                 if record["record_id"]:
                     params.append(self._insert_params(record))
         finally:

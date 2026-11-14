@@ -1,4 +1,5 @@
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -18,6 +19,7 @@ FIELDS = {  # what the (fake) model found in the uploaded document
     "respiration_rate": None, "temperature": "100.9 °F", "sp02": "93%"}, "physical_exam": "Erythema.",
     "lab_results": [{"test_name": "WBC Count", "result": "12.6 K/uL", "flag": "High"}, {"test_name": "Blood Culture", "result": "No growth", "flag": "Normal"}],
     "imaging_results": None, "final_diagnosis": "Non-purulent cellulitis.", "plan": "Antibiotics.", "progress_notes": None,
+    "icd10_code": "L03.1", "icd10_chapter": "Diseases of the skin and subcutaneous tissue", "icd10_category": "Cellulitis",
 }
 PDF = ("scan.pdf", b"%PDF-1.4 fake pdf", "application/pdf")
 
@@ -63,7 +65,7 @@ def seed(env, n=3, **extra):
     with RecordDB(env.db) as db:
         for i in range(n):
             db.create_record({**FIELDS, "record_id": f"REC-{i:03d}", "patient_name": f"Patient {i:02d}",
-                              "department": "Cardiology" if i % 2 else "Oncology", "encounter_date": f"2026-01-{i + 1:02d}T10:00:00", **extra})
+                              "department": "Cardiology" if i % 2 else "Oncology", "encounter_date": (datetime(2025, 1, 1, 10) + timedelta(days=i)).isoformat(), **extra})
 
 
 def stored(env, record_id="NEW-0001"):
@@ -99,11 +101,11 @@ def test_upload_review_and_save(env):
 
 def test_the_user_can_correct_what_the_model_found(env):
     job = upload(env)
-    data = form_data(FIELDS, patient_name="Samantha R. Nelson", age="64", sex="", allergies="")
+    data = form_data(FIELDS, patient_name="Samantha R. Nelson", age="99", sex="", allergies="")
     data["lab_test_name"], data["lab_result"], data["lab_flag"] = ["WBC Count", ""], ["13.0 K/uL", ""], ["High", ""]   # 2nd row left blank
     env.client.post(f"{job}/save", data=data)
     record = stored(env)
-    assert record["patient_name"] == "Samantha R. Nelson" and record["age"] == 64 and record["sex"] is None and record["allergies"] is None
+    assert record["patient_name"] == "Samantha R. Nelson" and record["age"] == 63 and record["sex"] is None and record["allergies"] is None
     assert record["lab_results"] == [{"test_name": "WBC Count", "result": "13.0 K/uL", "flag": "High"}]
 
 
@@ -115,7 +117,7 @@ def test_invalid_values_keep_the_form_and_the_file(env):
     assert 'value="63 years"' in r.text and 'aria-invalid="true"' in r.text                 # what the user typed is still there
     assert "Not found in the document" not in r.text                                   # the flagged name was edited: reviewed
     assert stored(env) is None and any(env.up.iterdir())
-    again = env.client.post(f"{job}/save", data=form_data(FIELDS, age="x"))
+    again = env.client.post(f"{job}/save", data=form_data(FIELDS, dob="x"))
     assert "Not found in the document" in again.text                                   # untouched: still flagged
     assert env.client.post(f"{job}/save", data=form_data(FIELDS)).status_code == 200      # fixed: saved (redirect followed)
 
@@ -224,12 +226,12 @@ def test_edit_shows_only_the_record_data(env):
 
 def test_edit_saves_every_field_and_clears_what_was_emptied(env):
     seed(env, 1)
-    data = form_data(FIELDS, record_id="HACKED", patient_name="", age="70", **{"vital_signs.heart_rate": "55 bpm", "encounter_date": "2026-03-01 08:30:15"})
+    data = form_data(FIELDS, record_id="HACKED", patient_name="Ana", age="70", **{"vital_signs.heart_rate": "55 bpm", "encounter_date": "2026-03-01 08:30:15"})
     data["lab_test_name"], data["lab_result"], data["lab_flag"] = ["Glucose", "", "Sodium"], ["97 mg/dL", "", "138"], ["Normal", "", ""]
     r = env.client.post("/records/REC-000/edit", data=data, follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/records?ok=updated&id=REC-000"
     record = stored(env, "REC-000")
-    assert record["patient_name"] is None and record["age"] == 70 and record["vital_signs"]["heart_rate"] == "55 bpm"
+    assert record["patient_name"] == "Ana" and record["age"] == 63 and record["vital_signs"]["heart_rate"] == "55 bpm"
     assert record["encounter_date"] == "2026-03-01T08:30:15" and record["record_id"] == "REC-000"        # the ID in the body is ignored
     assert record["lab_results"] == [{"test_name": "Glucose", "result": "97 mg/dL", "flag": "Normal"}, {"test_name": "Sodium", "result": "138", "flag": None}]
     assert stored(env, "HACKED") is None
@@ -289,8 +291,22 @@ def test_pipeline_reads_then_extracts_and_flags_invented_values(monkeypatch):
     steps = []
     monkeypatch.setattr(pipeline, "extract_auto", lambda path: {"text": "Patient Ana Gomez, age 40", "pages": [{}, {}, {}]})
     monkeypatch.setattr(pipeline, "get_fields", lambda text, template: {"patient_name": "Ana Gomez", "city": "Atlantis", "vital_signs": {"heart_rate": None}})
+    monkeypatch.setattr(pipeline.ICD10, "code_fields", lambda self, fields: {**fields, "icd10_code": "J44", "icd10_chapter": "c", "icd10_category": "k"})
     out = pipeline.run(Path("x.pdf"), steps.append)
-    assert steps == ["reading", "extracting"] and out.pages == 3 and out.ungrounded == ["city"]
+    assert steps == ["reading", "extracting", "coding"] and out.pages == 3 and out.ungrounded == ["city"]   # the derived ICD-10 values are not 'invented'
+    assert out.fields["icd10_code"] == "J44" and out.notice == ""
+
+
+def test_pipeline_keeps_the_extraction_when_the_coding_fails(monkeypatch):
+    monkeypatch.setattr(pipeline, "extract_auto", lambda path: {"text": "Ana Gomez", "pages": [{}]})
+    monkeypatch.setattr(pipeline, "get_fields", lambda text, template: {"patient_name": "Ana Gomez", "final_diagnosis": "COPD"})
+    def down(fields):
+        raise RuntimeError("model down")
+    monkeypatch.setattr(pipeline.ICD10, "code_fields", lambda self, fields: down(fields))
+    out = pipeline.run(Path("x.pdf"), lambda step: None)
+    assert out.fields["patient_name"] == "Ana Gomez" and out.fields["icd10_code"] is None and "model down" in out.notice
+    monkeypatch.setattr(pipeline.ICD10, "code_fields", lambda self, fields: {**fields, **dict.fromkeys(pipeline.ICD10.FIELDS)})
+    assert "No ICD-10 code could be assigned" in pipeline.run(Path("x.pdf"), lambda step: None).notice
 
 
 def test_pipeline_refuses_a_document_without_text(monkeypatch):
@@ -309,7 +325,7 @@ def test_form_values_round_trip_a_record():
 @pytest.mark.parametrize("text,iso", [("2026-06-09", "2026-06-09T00:00:00"), ("2026-06-09 09:25", "2026-06-09T09:25:00"),
                                       ("2026-06-09 09:25:03", "2026-06-09T09:25:03"), ("2026-06-09T09:25", "2026-06-09T09:25:00")])
 def test_dates_are_accepted_in_every_usual_format(text, iso):
-    assert forms.parse({"record_id": "A-1", "encounter_date": text})[0]["encounter_date"] == iso
+    assert forms.parse({"record_id": "A-1", "patient_name": "Ana", "encounter_date": text})[0]["encounter_date"] == iso
 
 
 @pytest.mark.parametrize("text", ["09/06/2026", "2026-06-09T9:25:03", "2026-13-01", "ayer", "2026-06-09T09:25:00+02:00"])
@@ -323,12 +339,175 @@ def test_dates_show_as_the_user_types_them():
 
 
 def test_empty_text_becomes_none_and_age_must_be_an_integer():
-    fields, errors = forms.parse({"record_id": "A-1", "patient_name": "   ", "age": ""})
-    assert errors == {} and fields["patient_name"] is None and fields["age"] is None and fields["lab_results"] == []
+    fields, errors = forms.parse({"record_id": "A-1", "patient_name": "Ana", "city": "   ", "age": ""})
+    assert errors == {} and fields["city"] is None and fields["age"] is None and fields["lab_results"] == []
     assert fields["vital_signs"] == {k: None for k in forms.VITALS}
     for bad in ("63.5", "-3", "sixty", "٣"):
-        assert "age" in forms.parse({"record_id": "A-1", "age": bad})[1], bad
+        assert "age" in forms.parse({"record_id": "A-1", "patient_name": "Ana", "age": bad})[1], bad
 
 
 def test_labels_for_the_flagged_values():
     assert [forms.label_of(p) for p in ("age", "vital_signs.sp02", "lab_results[1].result", "nope")] == ["Age", "SpO2", "Lab result 2 (result)", "nope"]
+
+
+# ---------------------------------------------------------------- patient, age and lab suggestions
+def test_the_patient_is_required(env):
+    seed(env, 1)
+    for blank in ("", "   "):
+        r = env.client.post("/records/REC-000/edit", data=form_data(FIELDS, patient_name=blank))
+        assert r.status_code == 422 and "The patient name is required." in r.text and 'aria-invalid="true"' in r.text
+    assert stored(env, "REC-000")["patient_name"] == "Patient 00"
+    job = upload(env)
+    r = env.client.post(f"{job}/save", data=form_data(FIELDS, patient_name=""))
+    assert r.status_code == 422 and "The patient name is required." in r.text and stored(env) is None
+
+
+@pytest.mark.parametrize("dob,encounter,age", [
+    ("1962-09-24", "2026-06-09", 63), ("1962-09-24", "2026-09-23", 63), ("1962-09-24", "2026-09-24", 64),
+    ("1962-09-24", "2026-09-24 08:00", 64), ("2024-02-29", "2025-02-28", 0), ("2024-02-29", "2025-03-01", 1), ("2026-06-09", "2026-06-09", 0)])
+def test_age_is_the_whole_years_between_birth_and_encounter(dob, encounter, age):
+    fields, errors = forms.parse({"record_id": "A-1", "patient_name": "Ana", "dob": dob, "encounter_date": encounter, "age": "7"})
+    assert errors == {} and fields["age"] == age                          # whatever was typed in Age is replaced
+
+
+def test_age_is_typed_only_when_it_cannot_be_calculated():
+    base = {"record_id": "A-1", "patient_name": "Ana"}
+    assert forms.parse({**base, "age": "40"})[0]["age"] == 40
+    assert forms.parse({**base, "age": "40", "dob": "1980-01-01"})[0]["age"] == 40          # one date is not enough
+    assert forms.parse({**base, "age": "40", "encounter_date": "2020-01-01"})[0]["age"] == 40
+
+
+def test_an_encounter_before_the_birth_is_refused():
+    fields, errors = forms.parse({"record_id": "A-1", "patient_name": "Ana", "dob": "2000-01-01", "encounter_date": "1999-12-31"})
+    assert "encounter_date" in errors and "earlier than the date of birth" in errors["encounter_date"]
+
+
+def test_edit_recalculates_the_age_when_a_date_changes(env):
+    seed(env, 1)
+    env.client.post("/records/REC-000/edit", data=form_data(FIELDS, dob="1990-12-31", encounter_date="2026-06-09 09:00"))
+    assert stored(env, "REC-000")["age"] == 35
+    env.client.post("/records/REC-000/edit", data=form_data(FIELDS, dob="1990-12-31", encounter_date="2026-12-31"))
+    assert stored(env, "REC-000")["age"] == 36
+
+
+def test_the_age_box_tells_how_it_is_calculated(env):
+    seed(env, 1)
+    assert "Calculated from the date of birth and the encounter date." in env.client.get("/records/REC-000/edit").text
+
+
+def test_lab_boxes_suggest_the_standard_tests_and_flags_but_accept_anything(env):
+    assert len(forms.LAB_TESTS) == 40 == len(set(forms.LAB_TESTS)) and forms.LAB_FLAGS == ("Normal", "High", "Low", "Borderline")
+    seed(env, 1)
+    page = env.client.get("/records/REC-000/edit").text
+    assert page.count('<datalist id="lab-tests">') == 1 and page.count('<option value="Troponin I (initial)">') == 1 and page.count('<option value="pH (arterial)">') == 1
+    assert '<option value="Borderline">' in page
+    assert page.count('list="lab-tests"') == len(FIELDS["lab_results"]) + 1 and page.count('list="lab-flags"') == len(FIELDS["lab_results"]) + 1   # each row + the template
+    data = form_data(FIELDS)
+    data["lab_test_name"], data["lab_result"], data["lab_flag"] = ["Glucose", "My own assay"], ["97", "5"], ["Normal", "Suspicious"]
+    assert env.client.post("/records/REC-000/edit", data=data, follow_redirects=False).status_code == 303
+    assert [(r["test_name"], r["flag"]) for r in stored(env, "REC-000")["lab_results"]] == [("Glucose", "Normal"), ("My own assay", "Suspicious")]
+
+
+# ---------------------------------------------------------------- page size and first / last page
+def rows_on(page: str) -> int:
+    return page.count(">Edit</a>")
+
+
+def test_first_and_last_page_buttons(env):
+    seed(env, 45)                                                                             
+    p1 = env.client.get("/records").text
+    assert "Page 1 of 2" in p1 and ">Next</a>" in p1 and "Last »" in p1 and "« First" not in p1 and ">Previous</a>" not in p1
+    assert 'href="/records?page=2" aria-label="Last page"' in p1
+    p2 = env.client.get("/records?page=2").text
+    assert "« First" in p2 and 'href="/records" aria-label="First page"' in p2 and ">Previous</a>" in p2 and "Last »" not in p2 and ">Next</a>" not in p2
+    single = env.client.get("/records?n=100").text
+    assert "Page " not in single and "« First" not in single and "Last »" not in single
+
+
+def test_records_per_page_can_be_chosen(env):
+    seed(env, 120)
+    assert rows_on(env.client.get("/records").text) == 25                                        # default
+    for n, pages, last in [(20, 6, 20), (25, 5, 20), (50, 3, 20), (100, 2, 20)]:
+        first = env.client.get(f"/records?n={n}").text
+        assert rows_on(first) == n and f"Page 1 of {pages}" in first, n
+        assert rows_on(env.client.get(f"/records?n={n}&page={pages}").text) == last, n
+    page = env.client.get("/records?n=50").text
+    assert '<option selected>50</option>' in page and [f"<option>{x}</option>" in page for x in (20, 25, 100)] == [True] * 3
+    assert 'href="/records?n=50&amp;page=2"' in page and 'href="/records?n=50&amp;page=3" aria-label="Last page"' in page   # the size travels with the links
+
+
+def test_an_unlisted_page_size_falls_back_to_the_default(env):
+    seed(env, 60)
+    assert rows_on(env.client.get("/records?n=7").text) == 25 and rows_on(env.client.get("/records?n=100000").text) == 25
+
+
+def test_the_page_size_survives_the_delete_dialog(env):
+    seed(env, 60)
+    dialog = env.client.get("/records/REC-000/delete?n=50&page=2").text
+    assert 'name="n" value="50"' in dialog and rows_on(dialog) == 10
+    r = env.client.post("/records/REC-000/delete", data={"q": "", "d": "", "n": "50", "page": "2"}, follow_redirects=False)
+    assert r.headers["location"] == "/records?n=50&page=2&ok=deleted&id=REC-000"
+
+
+# ---------------------------------------------------------------- ICD-10
+def test_the_review_shows_the_three_icd10_fields_and_the_coding_step(env):
+    job = upload(env)
+    page = env.client.get(job).text
+    assert "Assigning the ICD-10 code" in page and "ICD-10 classification" in page
+    assert 'name="icd10_code" value="L03.1"' in page
+    assert 'value="Diseases of the skin and subcutaneous tissue"' in page and 'value="Cellulitis"' in page
+    for name in ("icd10_chapter", "icd10_category"):
+        assert "readonly" in page.split(f'name="{name}"')[1].split(">")[0]                    # derived, not typed
+    assert "Not found in the document" not in page.split('id="f-icd10_code"')[1].split("</div>")[0]   # a derived value is never flagged
+
+
+def test_a_notice_from_the_coding_is_shown_in_the_review(env):
+    env.result = Extraction({**FIELDS, "icd10_code": None, "icd10_chapter": None, "icd10_category": None}, [], 1, "No ICD-10 code could be assigned automatically.")
+    page = env.client.get(upload(env)).text
+    assert "No ICD-10 code could be assigned automatically." in page and 'name="icd10_code" value=""' in page
+
+
+def test_saving_stores_the_icd10_fields(env):
+    env.client.post(f"{upload(env)}/save", data=form_data(FIELDS))
+    record = stored(env)
+    assert [record[c] for c in ("icd10_code", "icd10_chapter", "icd10_category")] == ["L03.1", "Diseases of the skin and subcutaneous tissue", "Cellulitis"]
+
+
+def test_chapter_and_category_always_follow_the_code(env):
+    job = upload(env)
+    data = form_data(FIELDS, icd10_code="j44", icd10_chapter="typed by hand", icd10_category="typed by hand")
+    env.client.post(f"{job}/save", data=data)
+    record = stored(env)
+    assert record["icd10_code"] == "J44" and record["icd10_chapter"] == "Diseases of the respiratory system"
+    assert record["icd10_category"] == "Other chronic obstructive pulmonary disease"
+
+
+def test_an_icd10_code_that_does_not_exist_is_refused(env):
+    job = upload(env)
+    for bad in ("ZZZ", "J4", "I20-I25", "IX", "L48"):
+        r = env.client.post(f"{job}/save", data=form_data(FIELDS, icd10_code=bad))
+        assert r.status_code == 422 and "Not a valid ICD-10 code" in r.text and f'value="{bad}"' in r.text, bad
+    assert stored(env) is None
+
+
+def test_an_empty_code_clears_chapter_and_category(env):
+    env.client.post(f"{upload(env)}/save", data=form_data(FIELDS, icd10_code=""))
+    assert [stored(env)[c] for c in ("icd10_code", "icd10_chapter", "icd10_category")] == [None, None, None]
+
+
+def test_editing_the_code_of_a_stored_record(env):
+    seed(env, 1)
+    page = env.client.get("/records/REC-000/edit").text
+    assert 'name="icd10_code" value="L03.1"' in page and 'value="Cellulitis"' in page
+    env.client.post("/records/REC-000/edit", data=form_data({**FIELDS, **dict.fromkeys(("icd10_chapter", "icd10_category"), "")}, icd10_code="I21.9"))
+    assert stored(env, "REC-000")["icd10_category"] == "Acute myocardial infarction"
+    legacy = {**FIELDS, "record_id": "OLD-1", "icd10_code": "I92.9", "icd10_chapter": "0", "icd10_category": "0"}      # as in the Excel
+    with RecordDB(env.db) as db:
+        db.create_record(legacy)
+    r = env.client.post("/records/OLD-1/edit", data=form_data(legacy))
+    assert r.status_code == 422 and "Not a valid ICD-10 code" in r.text                    # the user is asked to fix it
+
+
+def test_the_code_lookup_for_the_form(env):
+    assert env.client.get("/icd10?code=i21.9").json() == {"code": "I21.9", "chapter": "Diseases of the circulatory system", "category": "Acute myocardial infarction"}
+    assert env.client.get("/icd10?code=nope").json() == {} and env.client.get("/icd10").json() == {}

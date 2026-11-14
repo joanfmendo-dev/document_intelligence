@@ -20,6 +20,7 @@ RECORD = {  # what get_fields returns for a full document
                     {"test_name": "WBC Count", "result": "5.6 K/uL", "flag": "Normal"}],
     "imaging_results": "ECG with nonspecific ST-T changes.", "final_diagnosis": "Possible NSTEMI.",
     "plan": "Telemetry admission.", "progress_notes": "Ongoing surveillance.",
+    "icd10_code": "I21.9", "icd10_chapter": "Diseases of the circulatory system", "icd10_category": "Acute myocardial infarction",
 }
 EMPTY = {c: None for c in COLUMNS} | {"vital_signs": {k: None for k in RECORD["vital_signs"]}, "lab_results": []}
 
@@ -157,6 +158,33 @@ def test_import_excel_is_all_or_nothing(db, tmp_path):
     make_xlsx(tmp_path / "hdr.xlsx", [], header=bad_header)
     with pytest.raises(ValueError, match="department"):
         db.import_excel(tmp_path / "hdr.xlsx")
+
+
+def test_import_excel_without_the_icd10_columns_and_with_zeros(db, tmp_path):
+    old = [c for c in COLUMNS if not c.startswith("icd10")]                       # the first version of the Excel
+    make_xlsx(tmp_path / "old.xlsx", [excel_row(RECORD)[:len(old)]], header=old)
+    assert db.import_excel(tmp_path / "old.xlsx") == 1
+    assert db.read_record("SYNUS-2026-0001")["icd10_code"] is None
+    zero = {**RECORD, "record_id": "Z-1", "icd10_chapter": 0, "icd10_category": 0, "icd10_code": " "}  # a tool wrote 0 for 'no value'
+    make_xlsx(tmp_path / "zero.xlsx", [excel_row(zero)])
+    db.import_excel(tmp_path / "zero.xlsx")
+    assert [db.read_record("Z-1")[c] for c in ("icd10_code", "icd10_chapter", "icd10_category")] == [None, None, None]
+
+
+def test_a_database_made_before_the_icd10_columns_is_upgraded(tmp_path):
+    import duckdb
+    path = tmp_path / "old.duckdb"
+    con = duckdb.connect(str(path))
+    old = {c: t for c, t in COLUMNS.items() if not c.startswith("icd10")}
+    con.execute(f"CREATE TABLE medical_records ({', '.join(f'{c} {t}' for c, t in old.items())})")
+    con.execute("INSERT INTO medical_records (record_id, patient_name) VALUES ('OLD-1', 'Ana')")
+    con.close()
+    with RecordDB(path) as d:
+        assert [r[0] for r in d.con.execute("DESCRIBE medical_records").fetchall()] == list(COLUMNS)
+        assert d.read_record("OLD-1")["patient_name"] == "Ana" and d.read_record("OLD-1")["icd10_code"] is None
+        d.update_record({"record_id": "OLD-1", "icd10_code": "J44"})
+        assert d.read_record("OLD-1")["icd10_code"] == "J44"
+    RecordDB(path).close()                                                          # opening it again changes nothing
 
 
 # ---------------------------------------------------------------- listing
