@@ -58,7 +58,7 @@ get_fields(text, json_format, instructions=(
     "'age' and 'sex' come from the 'AGE / SEX' label."))
 ```
 
-## 3. Base de datos local: `RecordDB` (`docintel/db.py`)
+## 3. Base de datos local: `RecordDB` (`docintel/database/records.py`)
 Guarda en un archivo **DuckDB** el diccionario que devuelve `get_fields` y lo lee de vuelta con el mismo formato.
 La tabla `medical_records` tiene las mismas 24 columnas, en el mismo orden, que `medical_records.xlsx` (las tres últimas son `icd10_code`, `icd10_chapter` e `icd10_category`; un archivo `.duckdb` creado antes las recibe solas, vacías, al abrirlo): fechas
 `TIMESTAMP`, `age` `INTEGER`, `vital_signs` y `lab_results` `JSON`, el resto `VARCHAR`. Solo `record_id` es obligatorio
@@ -83,7 +83,7 @@ with RecordDB("medical_records.duckdb") as db:           # por defecto DOCINTEL_
 - `import_excel` acepta el Excel con o sin las tres columnas ICD-10 (y puede actualizarlas con `update_icd=True`, ver abajo); las celdas vacías o con `0` quedan en `NULL`.
 - DuckDB permite que un solo proceso abra el archivo para escribir a la vez.
 
-### Variables derivadas: `docintel/data_transformation.py` (clase `ICD10`)
+### Variables derivadas: `docintel/database/data_transformation.py` (clase `ICD10`)
 Todo lo de ICD-10 está en una sola clase de este archivo; una variable derivada futura sería otra clase junto a ella. El modelo solo **propone el código**
 a partir de `final_diagnosis` (y `chief_complaint`); la validez del código, su **capítulo** y su **categoría** salen de la ontología oficial (paquete
 `simple-icd-10`, sin red), así que los tres campos nunca se contradicen y un código inventado se detecta. Si el modelo no da un código válido (se le
@@ -139,7 +139,7 @@ Cada registro se guarda apenas se codifica y solo se escriben `icd10_code`, `icd
 
 Con el Excel de prueba: 456 registros por actualizar (449 vacíos y 7 con códigos que no son ICD-10), 24 llamadas al modelo.
 
-## 4. Modelos: un solo lugar (`docintel/settings.py`, `docintel/llm.py`)
+## 4. Modelos: un solo lugar (`docintel/shared/settings.py`, `docintel/shared/llm.py`)
 Todo acceso a modelos pasa por `LLM` (sobre **litellm**) y `TokenCount`, como en tu ejemplo.
 Los modelos se nombran al estilo litellm; cambiar de proveedor es cambiar una cadena:
 
@@ -187,12 +187,67 @@ Necesita Ollama corriendo con el modelo de `settings.py` (el mismo que usa `get_
 - DuckDB deja abrir el archivo para escribir a un solo proceso: cierra notebooks u otras copias de la app que lo usen.
 - Las cargas en curso viven en memoria: si reinicias la app se pierden las que no se guardaron.
 
+## 6. Organización del código
+```
+docintel/
+  shared/       settings.py, llm.py (LLM, TokenCount), embeddings.py (Embedder): lo que usan todos los componentes
+  extraction/   extracción de texto (digital, OCR, VLM, auto) y get_fields
+  database/     records.py (RecordDB), embeddings.py (vectores), data_transformation.py (ICD-10)
+  web/          DocBase (FastAPI) + la página /copilot
+  copilot/      catálogo, plan, validador, ejecutor, respuesta, planner, agente (solo lectura)
+  evaluation/   conjunto dorado, exactitud de ejecución, juez LLM, informe
+```
+
+## 7. Embeddings (búsqueda por significado)
+Mismo modelo que `clinic_assistant`: `ollama/nomic-embed-text` (`DOCINTEL_EMBEDDING_MODEL`). **Ojo:** el `settings.py` de ese proyecto no venía en el zip;
+el modelo se dedujo de su docstring. Si usaba otro, cambia la variable. El texto de cada registro es `chief_complaint` + `history_of_present_illness` + `final_diagnosis`;
+los vectores viven en la tabla `record_embeddings` (con hash del texto y modelo, para saber cuándo están desactualizados).
+
+```python
+with RecordDB("medical_records.duckdb") as db:
+    db.import_excel("medical_records.xlsx", embed=True)   # importa y luego crea los vectores (por defecto embed=False)
+    db.embed_pending()      # crea o actualiza los que falten o estén viejos; borra los de registros que ya no existen
+    db.embedding_status()   # cuántos hay, cuántos faltan
+```
+Si el modelo de embeddings no responde, los registros quedan importados y `EmbeddingError` dice cuántos se alcanzaron a vectorizar; vuelve a llamar `embed_pending()`.
+En la app web, guardar o editar un registro crea su vector y borrarlo lo elimina; si el modelo está caído el guardado no falla (el vector queda pendiente).
+Solo la app web y los cargadores escriben vectores; el copilot únicamente vectoriza la pregunta.
+
+## 8. Copilot (solo lectura)
+Una pregunta en inglés pasa por: **Planner** (una llamada al LLM que devuelve un plan JSON) → **validate** (código: campos, operadores, valores contra el catálogo y la base, fechas, plausibilidad numérica)
+→ **Executor** (SELECT parametrizado armado por el código, nunca SQL del modelo) → **render** (texto por plantillas: ningún número lo escribe el modelo).
+Intenciones: buscar, agregar, abrir un registro, navegar, ayuda, aclarar y fuera de alcance (escrituras, exportar y consejo clínico se rechazan).
+
+```python
+from docintel.copilot import Copilot
+cp = Copilot.open("medical_records.duckdb", catalog_path="catalog.yaml")   # conexión de solo lectura
+a = cp.ask("Cardiology patients over 60 this year")
+print(a.interpretation, a.summary)                   # cómo entendió la pregunta, y el resultado
+b = cp.ask("only women", previous=a.plan)            # seguimiento: se pasa el plan anterior
+```
+El **catálogo** (`catalog.yaml`: campos, roles, valores con conteos) lo genera `Catalog.build(con)` y lo mantiene la app web al guardar/editar/borrar; el copilot nunca lo escribe
+(si no existe, lo calcula en memoria). La web lo guarda junto a la base (`<base>.catalog.yaml`, o `catalog_path=`). Página: `/copilot`, con enlaces a cada registro y "Show more".
+Umbral semántico `SEMANTIC_MIN_SIMILARITY=0.6`: **sin calibrar**.
+
+## 9. Evaluación
+```python
+from docintel.evaluation import load_golden, evaluate, Judge
+golden = load_golden()                                              # 58 casos (pregunta, plan esperado, resultado esperado)
+cp = Copilot.open("medical_records.duckdb", today=golden.as_of)     # el conjunto supone la fecha 2026-11-13
+report = evaluate(cp, golden)                                       # solo nivel 1 (sin juez); con juez: evaluate(cp, golden, Judge())
+print(report.format()); report.save("report.json")
+```
+Nivel 1: exactitud de ejecución (compara el resultado real con el esperado: total y ids para listas, filas para agregados; intervalo de Wilson).
+Nivel 2: juez LLM comercial (`DOCINTEL_JUDGE_MODEL`, `DOCINTEL_JUDGE_API_KEY`; solo sobre datos sintéticos) con dos prompts: fidelidad de la respuesta frente al resultado ejecutado, e interpretación frente a la pregunta;
+`calibrate` prueba al juez con respuestas corrompidas a propósito. El conjunto corresponde a la base de 1.000 registros del proyecto; los casos ICD-10 (I01–I03) requieren una base con las columnas `icd10_*` llenas y los semánticos (M01–M03) etiquetas humanas.
+
 ## Instalación
 ```powershell
 python -m venv .venv ; .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev]"     # incluye litellm (trae ~35 paquetes); `pytest` corre los tests; la app web también
 ollama pull gemma3:4b       # para get_fields
 ollama pull qwen3-vl:8b     # solo si usas extract_vlm
+ollama pull nomic-embed-text   # embeddings y búsqueda semántica del copilot
 ```
 
 ## Qué está probado y qué no
@@ -206,6 +261,7 @@ ollama pull qwen3-vl:8b     # solo si usas extract_vlm
 - Proveedores comerciales (OpenAI, etc.): solo probado que no reciben las opciones de Ollama; nunca se llamó a uno.
 
 ## Límites conocidos
+- **Copilot y embeddings nunca se han ejecutado con Gemma3/Ollama/nomic reales ni con el juez real** (no había Ollama ni API en el entorno). Con un planner "oráculo" el ejecutor reproduce los resultados esperados del conjunto dorado; la calidad del planner real está sin medir.
 - `extract_digital` ignora en silencio las imágenes con texto: para PDFs de origen desconocido usa `extract_auto`.
 - Un escaneo buscable con muy poco texto (menos de 1 carácter por 5.000 pt²) se lee por OCR y ese texto puede salir duplicado.
 - Texto dibujado como vectores no se detecta. Varias columnas: el orden de lectura se mezcla. Tablas partidas

@@ -9,6 +9,7 @@ the lab-rows buttons and Esc on the delete dialog.
 """
 from __future__ import annotations
 
+import json
 import logging
 import mimetypes
 from contextlib import asynccontextmanager
@@ -25,9 +26,13 @@ from starlette.exceptions import HTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.templating import Jinja2Templates
 
-from ..data_transformation import ICD10
-from ..db import RecordDB, RecordExistsError, RecordNotFoundError
-from ..settings import s
+from ..database.data_transformation import ICD10
+from ..copilot import Copilot
+from ..copilot.catalog import Catalog
+from ..database import RecordDB, RecordExistsError, RecordNotFoundError
+from ..shared.embeddings import EmbeddingError
+from ..shared.llm import LLMError
+from ..shared.settings import s
 from . import forms, pipeline as default_pipeline
 from .jobs import Jobs
 from .storage import DOCUMENT_SUFFIXES, UploadStore, FileTooLarge, kind_of
@@ -37,15 +42,22 @@ PAGE_SIZE = 25  # the default; the user can pick another from PAGE_SIZES
 PAGE_SIZES = (20, 25, 50, 100)
 LOCAL_HOSTS = ["localhost", "127.0.0.1", "[::1]"]
 STEP_LABELS = ["Reading the text (OCR on images)", "Extracting the fields", "Assigning the ICD-10 code", "Review and save"]
+log = logging.getLogger(__name__)
+COPILOT_EXAMPLES = ("Patients over 60 in Cardiology this year", "How many records per department?", "Who came in with trouble breathing at night?",
+                    "Average heart rate for patients with chest pain")
 FLASH = {"saved": "Record {id} saved.", "updated": "Changes to {id} saved.", "deleted": "Record {id} deleted."}
 
 
 def create_app(*, db_path: str | Path | None = None, uploads_dir: str | Path | None = None,
                pipeline: Callable | None = None, allowed_hosts: list[str] | None = None,
-               max_upload_mb: int | None = None) -> FastAPI:
-    """Build the app. Every argument defaults to the matching setting (docintel.settings); `pipeline` is
-    (path, on_step) -> Extraction, and is swapped in tests so they need neither OCR nor a model."""
+               max_upload_mb: int | None = None, catalog_path: str | Path | None = None,
+               copilot_llm=None, embedder=None) -> FastAPI:
+    """Build the app. Every argument defaults to the matching setting (docintel.shared.settings); `pipeline` is
+    (path, on_step) -> Extraction, and is swapped in tests so they need neither OCR nor a model.
+    `copilot_llm` and `embedder` replace the language and embedding models (tests); `catalog_path` is the copilot's catalog file,
+    which only this app writes (by default next to the database)."""
     db_path = str(db_path or s.DB_PATH)
+    catalog_file = Path(catalog_path) if catalog_path else Path(db_path).with_suffix(".catalog.yaml")
     max_mb = max_upload_mb or s.MAX_UPLOAD_MB
     uploads = UploadStore(uploads_dir or s.UPLOADS_DIR)
     jobs = Jobs(pipeline or default_pipeline.run)
@@ -56,7 +68,22 @@ def create_app(*, db_path: str | Path | None = None, uploads_dir: str | Path | N
     }
 
     def open_db() -> RecordDB:
-        return RecordDB(db_path)
+        return RecordDB(db_path, embedder=embedder)
+
+    def after_write(db: RecordDB, record_id: str | None) -> None:
+        """Keep what the copilot reads up to date: the record's vector and the catalog of values. Neither may fail a save:
+        a record without a vector is picked up by `embed_pending`, and a stale catalog falls back to the live database."""
+        if record_id:
+            try:
+                db.embed_record(record_id)
+            except EmbeddingError as exc:
+                log.warning("record %s saved without embedding: %s", record_id, exc)
+        try:
+            previous = Catalog.from_yaml(catalog_file) if catalog_file.is_file() else None
+            catalog = previous.refresh(db.con) if previous else Catalog.build(db.con)
+            catalog.to_yaml(catalog_file)
+        except Exception as exc:  # never lose a save over the catalog
+            log.warning("could not update the catalog: %s", exc)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -194,6 +221,7 @@ def create_app(*, db_path: str | Path | None = None, uploads_dir: str | Path | N
                         db.update_record(fields, keep_existing=False)
                     else:
                         db.create_record(fields)
+                    after_write(db, fields["record_id"])
             except RecordExistsError:
                 errors["record_id"] = "A record with this ID already exists. Change the ID or tick “Replace the existing record”."
                 conflict = True
@@ -243,6 +271,8 @@ def create_app(*, db_path: str | Path | None = None, uploads_dir: str | Path | N
     def delete(record_id: str, form: FormData = Depends(read_form)):
         with open_db() as db:
             deleted = db.delete_record(record_id)
+            if deleted:
+                after_write(db, None)
         keep = {k: form.get(k) for k in ("q", "d", "n", "page") if form.get(k)}
         return go("/records?" + urlencode({**keep, "ok": "deleted" if deleted else "", "id": record_id}))
 
@@ -273,8 +303,44 @@ def create_app(*, db_path: str | Path | None = None, uploads_dir: str | Path | N
         try:
             with open_db() as db:
                 db.update_record(fields, keep_existing=False)  # a field the user emptied is cleared
+                after_write(db, record_id)
         except RecordNotFoundError:
             found(None, "record")
         return go(f"/records?{urlencode({'ok': 'updated', 'id': record_id})}")
+
+    # ------------------------------------------------------------ the copilot
+    def copilot_context(**extra) -> dict:
+        return {**dict(active="copilot", question="", answer=None, previous="", plan_json="", examples=COPILOT_EXAMPLES), **extra}
+
+    @app.get("/copilot")
+    def copilot_page(request: Request):
+        return render(request, "copilot.html", **copilot_context())
+
+    @app.post("/copilot")
+    def copilot_ask(request: Request, form: FormData = Depends(read_form)):
+        """Answer a question. With `previous` (the plan of the last answer) the question is a follow-up; with `plan` and `page`
+        it is the 'show more' button: the same plan, no new call to the model."""
+        question = str(form.get("question") or "")[:500]
+        try:
+            previous = json.loads(form.get("previous") or "null")
+            plan = json.loads(form.get("plan") or "null")
+            page = max(1, int(form.get("page") or 1))
+        except ValueError:
+            raise HTTPException(400, "That request could not be read.")
+        if not isinstance(previous, (dict, type(None))) or not isinstance(plan, (dict, type(None))):
+            raise HTTPException(400, "That request could not be read.")
+        db = open_db()
+        try:
+            copilot = Copilot.from_db(db, catalog_path=catalog_file, llm=copilot_llm)
+            answer = copilot.answer_plan(plan, page) if plan else copilot.ask(question, previous)
+        except LLMError:
+            answer = None
+        finally:
+            db.close()
+        shown = {"question": question, "answer": answer, "plan_json": json.dumps(answer.plan) if answer and answer.plan else ""}
+        # a clarification, an error or a refusal keeps the earlier plan, so the user's next message still refines it
+        keep = answer and answer.kind in ("clarify", "error", "out_of_scope", "help", "navigate")
+        shown["previous"] = json.dumps(previous) if keep and previous else shown["plan_json"] if answer and answer.kind in ("results", "aggregate") else ""
+        return render(request, "copilot.html", **copilot_context(**shown))
 
     return app

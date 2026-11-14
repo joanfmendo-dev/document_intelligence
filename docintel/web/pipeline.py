@@ -5,10 +5,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from ..data_transformation import ICD10
-from ..auto import extract_auto
-from ..fields import find_ungrounded, get_fields
-from ..settings import s
+from ..database.data_transformation import ICD10
+from ..extraction.auto import extract_auto
+from ..extraction.fields import find_ungrounded, get_fields
+from ..shared.settings import s
 
 
 @dataclass

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "docintel"
-version = "0.5.0"
+version = "0.6.0"
 description = "Document text extraction (digital / OCR / VLM / auto) and LLM field extraction (get_fields)"
 requires-python = ">=3.10"
 dependencies = [
@@ -23,6 +23,7 @@ dependencies = [
   "uvicorn>=0.29",
   "jinja2>=3.1",
   "python-multipart>=0.0.9",
+  "pyyaml>=6",
   "pytest>=8"
 ]
 
@@ -34,6 +35,7 @@ docintel-web = "docintel.web.__main__:main"
 
 [tool.setuptools.package-data]
 "docintel.web" = ["templates/*.html", "static/*"]
+"docintel.evaluation" = ["data/*.json"]
 
 [tool.setuptools.packages.find]
 include = ["docintel*"]

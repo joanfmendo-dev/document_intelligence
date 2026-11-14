@@ -7,7 +7,7 @@ import shutil
 from pathlib import Path
 from typing import BinaryIO
 
-from .._images import IMAGE_SUFFIXES
+from ..extraction._images import IMAGE_SUFFIXES
 
 DOCUMENT_SUFFIXES = {".pdf", ".docx", ".txt"} | IMAGE_SUFFIXES
 _IN_BROWSER_IMAGES = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}  # TIFF is not shown by browsers

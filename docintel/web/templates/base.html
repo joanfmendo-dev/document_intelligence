@@ -9,7 +9,7 @@
 {% block head %}{% endblock %}
 </head>
 <body>
-<nav class="bar"><span class="logo">DocBase</span><a href="/upload"{% if active == 'upload' %} class="on" aria-current="page"{% endif %}>Upload document</a><a href="/records"{% if active == 'records' %} class="on" aria-current="page"{% endif %}>Database</a></nav>
+<nav class="bar"><span class="logo">DocBase</span><a href="/upload"{% if active == 'upload' %} class="on" aria-current="page"{% endif %}>Upload document</a><a href="/records"{% if active == 'records' %} class="on" aria-current="page"{% endif %}>Database</a><a href="/copilot"{% if active == 'copilot' %} class="on" aria-current="page"{% endif %}>Ask the copilot</a></nav>
 <main class="wrap{% block wide %}{% endblock %}"{% block main_attrs %}{% endblock %}>
 {% if flash %}<p class="ok" role="status">{{ flash }}</p>{% endif %}
 {% block content %}{% endblock %}

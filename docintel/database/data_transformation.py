@@ -1,9 +1,9 @@
 """Derived variables: values computed from what a record already says. For now only the ICD-10 coding of the diagnosis.
 
-    from docintel.data_transformation import ICD10
+    from docintel.database import ICD10
 
     ICD10.resolve("I21.9")                         # -> Coding("I21.9", "Diseases of the circulatory system", "Acute myocardial infarction")
-    icd = ICD10()                                  # uses the model of docintel.settings; pass llm=... to use another
+    icd = ICD10()                                  # uses the model of docintel.shared.settings; pass llm=... to use another
     icd.classify("Community-acquired pneumonia", "Cough and fever")   # -> Coding("J18", ...)
     icd.code_fields(get_fields(text, json_format)) # -> the same dict + icd10_code / icd10_chapter / icd10_category
 
@@ -30,8 +30,8 @@ from typing import Callable, NamedTuple
 
 import simple_icd_10 as icd
 
-from .db import RecordDB
-from .llm import LLM
+from .records import RecordDB
+from ..shared.llm import LLM
 
 
 class ICD10:
@@ -110,7 +110,7 @@ Rules:
     def classify(self, final_diagnosis: str | None, chief_complaint: str | None = "") -> "ICD10.Coding | None":
         """Ask the model for the ICD-10 code of a diagnosis (and chief complaint) and resolve it.
         None if there is nothing to code or the model does not return a valid code, even after one correction.
-        An unreachable model raises docintel.llm.LLMError."""
+        An unreachable model raises docintel.shared.llm.LLMError."""
         diagnosis, complaint = (final_diagnosis or "").strip(), (chief_complaint or "").strip()
         if not diagnosis and not complaint:
             return None

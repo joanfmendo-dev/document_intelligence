@@ -4,7 +4,7 @@ import warnings
 import pytest
 
 from docintel import LLM, get_fields
-from docintel.fields import _conform, _hint, _parse_json, _schema, find_ungrounded
+from docintel.extraction.fields import _conform, _hint, _parse_json, _schema, find_ungrounded
 
 # The template exactly as specified: only its shape and types matter, its values are never sent to a model.
 TEMPLATE = {
@@ -141,7 +141,7 @@ def test_empty_text_does_not_call_the_model(ollama):
 
 
 def test_model_comes_from_settings_or_from_the_llm_you_pass(ollama, monkeypatch):
-    from docintel.settings import s
+    from docintel.shared.settings import s
 
     ollama.reply(json.dumps(GOOD))
     monkeypatch.setattr(s, "LLM_MODEL", "ollama_chat/llama3.2:3b")

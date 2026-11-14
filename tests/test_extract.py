@@ -9,10 +9,10 @@ from PIL import Image
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
-import docintel.auto as auto_mod
+import docintel.extraction.auto as auto_mod
 from docintel import extract_auto, extract_digital, extract_ocr, extract_vlm
-from docintel._entries import Entry, render_page
-from docintel._images import flatten
+from docintel.extraction._entries import Entry, render_page
+from docintel.extraction._images import flatten
 
 SAMPLES = Path(__file__).resolve().parent.parent / "samples"
 HYBRID = SAMPLES / "SYNUS-2026-0571.pdf"      # text layer + 3 embedded images with tables
@@ -168,7 +168,7 @@ def test_flatten_turns_transparency_white():
 def test_ocr_missing_backend_gives_actionable_error(monkeypatch):
     import rapidocr
 
-    import docintel.ocr as ocr_mod
+    import docintel.extraction.ocr as ocr_mod
 
     def boom(*args, **kwargs):
         raise ImportError("onnxruntime is not installed.")
@@ -332,8 +332,8 @@ def test_vlm_warns_when_truncated(ollama, page_image):
 
 
 def test_vlm_errors_are_actionable(ollama, page_image, monkeypatch):
-    from docintel.llm import LLMError
-    from docintel.settings import s
+    from docintel.shared.llm import LLMError
+    from docintel.shared.settings import s
 
     ollama.reply("boom", status=500)
     with pytest.raises(LLMError, match="qwen3-vl"):

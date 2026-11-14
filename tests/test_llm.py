@@ -1,8 +1,8 @@
 import pytest
 
 from docintel import LLM, TokenCount
-from docintel.llm import LLMError, image_content
-from docintel.settings import s
+from docintel.shared.llm import LLMError, image_content
+from docintel.shared.settings import s
 
 
 def test_complete_builds_the_ollama_request_and_counts_tokens(ollama):

@@ -3,7 +3,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import pytest
 
-from docintel.settings import s
+from docintel.shared.settings import s
 
 
 class FakeOllama:

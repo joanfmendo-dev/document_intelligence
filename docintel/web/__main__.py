@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import argparse
 
-from ..settings import s
+from ..shared.settings import s
 
 LOOPBACK = ("127.0.0.1", "localhost", "::1")
 
@@ -19,7 +19,7 @@ def main(argv: list[str] | None = None) -> None:
     import duckdb
     import uvicorn
 
-    from ..db import RecordDB
+    from ..database import RecordDB
     from .app import create_app
 
     try:

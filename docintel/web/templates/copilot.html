@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Copilot · DocBase{% endblock %}
+{% block content %}
+<h1>Ask the copilot</h1>
+<p class="sub">Ask about the saved records in your own words. It only reads: it never changes, exports or explains a record.</p>
+<form method="post" action="/copilot" class="card">
+<label for="question">{{ 'Refine the search or ask something new' if previous else 'Your question' }}</label>
+<input id="question" name="question" type="search" maxlength="500" value="{{ question if not answer else '' }}" required autofocus>
+<input type="hidden" name="previous" value="{{ previous }}">
+<div class="actions" style="margin-top:12px"><button class="btn pri" type="submit">Ask</button></div>
+{% if not answer %}<p class="hint mute">For example: {% for e in examples %}“{{ e }}”{{ '; ' if not loop.last }}{% endfor %}</p>{% endif %}
+</form>
+{% if answer %}
+<section class="card" aria-live="polite">
+<p class="sub" style="margin-bottom:8px">You asked: “{{ question }}”</p>
+{% if answer.interpretation %}<p class="sub"><strong>Understood as:</strong> {{ answer.interpretation }}</p>{% endif %}
+{% if answer.kind == 'error' %}<p class="err" role="alert">{{ answer.summary }}</p>
+{% else %}<p><strong>{{ answer.summary }}</strong></p>{% endif %}
+{% for n in answer.notes %}<p class="warn">{{ n }}</p>{% endfor %}
+{% if answer.rows and answer.kind in ('results', 'aggregate') %}
+<div class="scroll"><table>
+<thead><tr>{% for c in answer.columns %}<th scope="col">{{ c.replace('_', ' ') }}</th>{% endfor %}{% if answer.kind == 'results' %}<th scope="col">Open</th>{% endif %}</tr></thead>
+<tbody>{% for r in answer.rows %}<tr>{% for c in answer.columns %}<td>{{ r[c] if r[c] is not none else '—' }}</td>{% endfor %}{% if answer.kind == 'results' %}<td class="nw"><a class="btn" href="/records/{{ r.record_id|urlencode }}/edit" aria-label="Open {{ r.record_id }}">Open</a></td>{% endif %}</tr>{% endfor %}</tbody>
+</table></div>
+{% elif answer.kind == 'record' and answer.rows %}
+<dl>{% for c in answer.columns %}{% if answer.rows[0][c] is not none %}<dt class="sub" style="margin:8px 0 0">{{ c.replace('_', ' ') }}</dt><dd style="margin:0">{{ answer.rows[0][c] }}</dd>{% endif %}{% endfor %}</dl>
+{% endif %}
+{% if answer.suggestions %}<p class="sub">Did you mean: {{ answer.suggestions|join(', ') }}?</p>{% endif %}
+<div class="actions" style="justify-content:flex-start;margin-top:12px">
+{% for l in answer.links %}<a class="btn" href="{{ l.url }}">{{ l.label }}</a>{% endfor %}
+{% if answer.has_more %}<form method="post" action="/copilot" style="display:inline"><input type="hidden" name="plan" value="{{ plan_json }}"><input type="hidden" name="question" value="{{ question }}"><input type="hidden" name="previous" value="{{ previous }}"><input type="hidden" name="page" value="{{ answer.page + 1 }}"><button class="btn" type="submit">Show more</button></form>{% endif %}
+</div>
+</section>
+{% endif %}
+{% endblock %}

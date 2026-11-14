@@ -13,8 +13,8 @@ from pathlib import Path
 
 from ._entries import text_result
 from ._images import iter_page_images
-from .llm import LLM, image_content
-from .settings import s
+from ..shared.llm import LLM, image_content
+from ..shared.settings import s
 
 DEFAULT_PROMPT = (
     "Transcribe this document page to Markdown.\n"

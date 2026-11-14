@@ -1,0 +1,85 @@
+"""The planner: the one place the copilot asks a language model something.
+
+It gets the question, the previous plan (for follow-ups) and the catalog, and returns a JSON plan (see plan.py). It is not trusted:
+whatever it returns goes through validator.py before it can touch the database.
+"""
+from __future__ import annotations
+
+import json
+from typing import Any
+
+from ..shared.llm import LLM, LLMError
+from ..shared.settings import s
+from .catalog import Catalog
+from .plan import PlanFormatError, parse_plan, plan_schema
+
+INSTRUCTIONS = """You turn a question about a medical-records database into a JSON plan. You never write SQL and you never answer the question yourself: another program runs the plan.
+Reply with ONE JSON object and nothing else.
+
+INTENTS (field "intent")
+- search: find records. Uses "filters" and, only for a description by meaning, "text_query".
+- aggregate: count / avg / min / max. Uses "filters" and "aggregate": {"metric": "count|avg|min|max", "field": <numeric field or null>, "group_by": <one field or null>, "top_n": <integer or null>}.
+- get_record: open one record. Uses "record_id".
+- navigate: take the user to a page. Uses "destination" ("records", "record" or "upload"), and "record_id" or "filters" when relevant.
+- help: "topic" is one of capabilities, upload_formats, fields, search_examples.
+- clarify: the question is ambiguous, or names something that does not exist. Uses "question" (what to ask the user), optionally "suggestions".
+- out_of_scope: "reason" is write (anything that adds, changes or deletes data), export, clinical_advice, or unrelated.
+
+FILTERS: a list of {"field", "op", "value"}; ALL of them must hold. Use only the fields and operators listed in the catalog. For "A or B" inside one field use op "in" with a list.
+- Categorical values: copy the spelling of the catalog values exactly. If the user names a value that is not in the catalog, use clarify.
+- Dates: never calculate dates. Use op "between" with one of {"year": 2025}, {"month": "2025-03"}, {"day": "2025-03-04"}, {"token": "this_year"} (also last_year, this_month, last_month, today, yesterday), {"token": "last_n_days", "n": 30}, {"from": "2025-01-01", "to": "2025-03-31"}.
+- Numbers: write plain numbers. Temperature is stored in Fahrenheit; if the user gives Celsius write {"value": 39, "unit": "C"}.
+- Lab results: field "lab_results", op "has", value {"test_name": [...], "flag": [...]}. Include EVERY catalog test name that matches what the user said (some tests have variants).
+- Text fields (diagnosis, complaint, patient name): op "contains" with a short word or phrase. Prefer this to text_query when you know the word.
+- text_query is only for describing a case by meaning ("dizzy when standing up"). Combine it with filters when the question also names a department, a date, etc.
+
+FOLLOW-UPS: when a previous plan is given, return the COMPLETE new plan: keep every condition that still applies, and change, add or remove only what the new question says ("only women" adds a filter; "make it over 70" replaces the age filter; "remove the age filter" removes it; "now by insurance" changes group_by).
+
+NEVER invent a field, a value or a record ID. Requests to add, edit, delete or run commands are out_of_scope with reason "write".
+
+EXAMPLES
+Question: Gastroenterology patients under 40 in January 2026
+{"intent": "search", "filters": [{"field": "department", "op": "in", "value": ["Gastroenterology"]}, {"field": "age", "op": "lt", "value": 40}, {"field": "encounter_date", "op": "between", "value": {"month": "2026-01"}}]}
+Question: average heart rate by sex
+{"intent": "aggregate", "filters": [], "aggregate": {"metric": "avg", "field": "vital_signs.heart_rate", "group_by": "sex", "top_n": null}}
+Question: patients who feel dizzy when they stand up
+{"intent": "search", "filters": [], "text_query": "dizziness on standing up"}
+Question: please rename patient 12 to Ana
+{"intent": "out_of_scope", "reason": "write"}
+"""
+
+
+class PlannerError(LLMError):
+    """The model did not return a usable plan, even after one retry."""
+
+
+class Planner:
+    def __init__(self, catalog: Catalog, llm: Any = None, *, max_attempts: int = 2):
+        """`llm` is anything with .run(messages, **params) -> str (default: the model in settings: COPILOT_LLM_MODEL or LLM_MODEL)."""
+        self.catalog = catalog
+        self.llm = llm if llm is not None else LLM(model=s.COPILOT_LLM_MODEL or None)
+        self.max_attempts = max_attempts
+
+    def messages(self, question: str, previous: dict | None = None) -> list[dict]:
+        system = INSTRUCTIONS + "\nCATALOG (fields, [role; operators], and for categorical fields the values with their record counts)\n" \
+            + self.catalog.prompt_text(question)
+        user = f"Question: {question}"
+        if previous:
+            user = f"Previous plan: {json.dumps(previous, ensure_ascii=False)}\nFollow-up question: {question}"
+        return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+    def plan(self, question: str, previous: dict | None = None) -> dict:
+        """The model's plan for `question`. One retry, telling the model what was wrong with an unusable answer.
+        Raises PlannerError if it still fails, LLMError if the model cannot be reached."""
+        messages = self.messages(question, previous)
+        response_format = {"type": "json_schema", "json_schema": {"name": "plan", "schema": plan_schema(self.catalog), "strict": True}}
+        last = ""
+        for _ in range(self.max_attempts):
+            reply = self.llm.run(messages, temperature=0, max_tokens=700, response_format=response_format)
+            try:
+                return parse_plan(reply)
+            except PlanFormatError as exc:
+                last = str(exc)
+                messages = messages + [{"role": "assistant", "content": reply},
+                                       {"role": "user", "content": f"That was not usable: {exc}. Reply with only the JSON plan."}]
+        raise PlannerError(f"the model did not return a usable plan ({last})")

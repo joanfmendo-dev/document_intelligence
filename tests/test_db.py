@@ -4,7 +4,7 @@ import pytest
 from openpyxl import Workbook
 
 from docintel import RecordDB, RecordExistsError, RecordNotFoundError, get_fields
-from docintel.db import COLUMNS
+from docintel.database import COLUMNS
 
 RECORD = {  # what get_fields returns for a full document
     "record_id": "SYNUS-2026-0001", "department": "Cardiology", "patient_name": "Jennifer Parker",

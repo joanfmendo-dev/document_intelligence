@@ -5,8 +5,8 @@ import pytest
 from datetime import datetime
 
 from docintel import RecordDB
-from docintel.data_transformation import ICD10
-from docintel.llm import LLMError
+from docintel.database.data_transformation import ICD10
+from docintel.shared.llm import LLMError
 from openpyxl import Workbook, load_workbook
 
 
@@ -273,7 +273,7 @@ def test_when_the_model_fails_halfway_the_coded_rows_are_saved_and_the_run_can_c
 
 # ---------------------------------------------------------------- RecordDB.import_excel(update_icd=...)
 def db_excel(tmp_path):
-    from docintel.db import COLUMNS
+    from docintel.database import COLUMNS
     from tests.test_db import RECORD, excel_row, make_xlsx
     old = [c for c in COLUMNS if not c.startswith("icd10")]
     rows = [excel_row({**RECORD, "record_id": f"R-{i}", **icd})[:len(old)] + [icd.get(c) for c in ICD10.FIELDS]
@@ -291,7 +291,7 @@ def test_import_excel_does_not_update_the_icd10_by_default(tmp_path):
 @pytest.mark.parametrize("mode,expected", [("missing", ["J44", "J18", "J18"]), ("all", ["J18", "J18", "J18"])])
 def test_import_excel_can_update_the_icd10_first(tmp_path, monkeypatch, mode, expected):
     path = db_excel(tmp_path)
-    monkeypatch.setattr("docintel.data_transformation.LLM", lambda *a, **k: FakeLLM(*[{"code": "J18"}] * 3))
+    monkeypatch.setattr("docintel.database.data_transformation.LLM", lambda *a, **k: FakeLLM(*[{"code": "J18"}] * 3))
     before = path.read_bytes()
     with RecordDB(":memory:") as db:
         assert db.import_excel(path, update_icd=True, icd_mode=mode) == 3
@@ -302,7 +302,7 @@ def test_import_excel_can_update_the_icd10_first(tmp_path, monkeypatch, mode, ex
 
 def test_import_excel_can_also_save_the_updated_excel(tmp_path, monkeypatch):
     path = db_excel(tmp_path)
-    monkeypatch.setattr("docintel.data_transformation.LLM", lambda *a, **k: FakeLLM(*[{"code": "J18"}] * 3))
+    monkeypatch.setattr("docintel.database.data_transformation.LLM", lambda *a, **k: FakeLLM(*[{"code": "J18"}] * 3))
     with RecordDB(":memory:") as db:
         db.import_excel(path, update_icd=True, icd_output=tmp_path / "updated.xlsx")
     assert [r["icd10_code"] for r in read_excel(tmp_path / "updated.xlsx")] == ["J44", "J18", "J18"]
@@ -315,7 +315,7 @@ def test_import_excel_arguments_are_checked_and_a_failed_coding_imports_nothing(
             db.import_excel(path, icd_output=tmp_path / "x.xlsx")
         with pytest.raises(ValueError, match="mode must be"):
             db.import_excel(path, update_icd=True, icd_mode="some")
-        monkeypatch.setattr("docintel.data_transformation.LLM", lambda *a, **k: FakeLLM(LLMError("down")))
+        monkeypatch.setattr("docintel.database.data_transformation.LLM", lambda *a, **k: FakeLLM(LLMError("down")))
         with pytest.raises(LLMError):
             db.import_excel(path, update_icd=True)
         assert db.con.execute("SELECT count(*) FROM medical_records").fetchone()[0] == 0

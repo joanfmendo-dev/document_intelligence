@@ -21,6 +21,26 @@ class Settings:
     VLM_API_KEY = os.getenv("DOCINTEL_VLM_API_KEY", "")
     VLM_BASE_URL = os.getenv("DOCINTEL_VLM_BASE_URL", "")
 
+    # embedding model (the one clinic_assistant used): turns record text into vectors for the copilot's semantic search
+    EMBEDDING_MODEL = os.getenv("DOCINTEL_EMBEDDING_MODEL", "ollama/nomic-embed-text")
+    EMBEDDING_API_KEY = os.getenv("DOCINTEL_EMBEDDING_API_KEY", "")
+    EMBEDDING_BASE_URL = os.getenv("DOCINTEL_EMBEDDING_BASE_URL", "")
+    # the record fields that make up the text to embed (in this order); decided with the recall test, so configurable
+    EMBEDDING_FIELDS = ("chief_complaint", "history_of_present_illness", "final_diagnosis")
+
+    # copilot (docintel.copilot): model that writes the plan, the catalog file, and how far semantic search reaches
+    COPILOT_LLM_MODEL = os.getenv("DOCINTEL_COPILOT_LLM_MODEL", "")  # "" = LLM_MODEL
+    CATALOG_PATH = os.getenv("DOCINTEL_CATALOG_PATH", "catalog.yaml")
+    CATALOG_MAX_VALUES = 100              # a column with more distinct values than this does not list them
+    COPILOT_PAGE_SIZE = 25                # rows shown per answer
+    SEMANTIC_TOP_K = 50                   # most candidates a semantic search returns
+    SEMANTIC_MIN_SIMILARITY = float(os.getenv("DOCINTEL_SEMANTIC_MIN_SIMILARITY", "0.6"))  # to calibrate with the golden set
+
+    # evaluation (docintel.evaluation): the judge is a commercial model, used offline and only on synthetic data
+    JUDGE_MODEL = os.getenv("DOCINTEL_JUDGE_MODEL", "openai/gpt-4o-mini")
+    JUDGE_API_KEY = os.getenv("DOCINTEL_JUDGE_API_KEY", "")
+    JUDGE_BASE_URL = os.getenv("DOCINTEL_JUDGE_BASE_URL", "")
+
     # Applied only to Ollama models. Ollama silently cuts whatever does not fit in the context window.
     OLLAMA_NUM_CTX = int(os.getenv("DOCINTEL_OLLAMA_NUM_CTX", "8192"))
     OLLAMA_KEEP_ALIVE = os.getenv("DOCINTEL_OLLAMA_KEEP_ALIVE", "10m")

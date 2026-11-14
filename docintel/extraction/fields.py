@@ -17,8 +17,8 @@ import warnings
 from datetime import datetime
 from typing import Any
 
-from .llm import LLM
-from .settings import s
+from ..shared.llm import LLM
+from ..shared.settings import s
 
 SYSTEM_PROMPT = (
     "You extract structured data from the text of a document.\n"

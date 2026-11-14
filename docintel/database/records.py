@@ -20,7 +20,9 @@ from typing import Any
 
 import duckdb
 
-from .settings import s
+from ..shared.embeddings import Embedder, EmbeddingError
+from ..shared.settings import s
+from . import embeddings as emb
 
 TABLE = "medical_records"
 COLUMNS = {  # name -> DuckDB type; the order is the Excel's
@@ -87,14 +89,23 @@ def _check(fields: Any) -> None:
 
 
 class RecordDB:
-    def __init__(self, path: str | Path | None = None):
+    def __init__(self, path: str | Path | None = None, *, embedder: Embedder | None = None):
         """Open (and create, if needed) the DuckDB file at `path` (default: DOCINTEL_DB_PATH).
-        Use ":memory:" for a throwaway database. DuckDB lets one process open the file for writing at a time."""
+        Use ":memory:" for a throwaway database. DuckDB lets one process open the file for writing at a time.
+        `embedder` is the client that creates the vectors (default: the model in docintel.shared.settings, created on first use)."""
         self.path = str(path or s.DB_PATH)
+        self._embedder = embedder
         self.con = duckdb.connect(self.path)
+        self.con.execute(emb.CREATE)
         self.con.execute(f"CREATE TABLE IF NOT EXISTS {TABLE} ({', '.join(f'{c} {t}' for c, t in COLUMNS.items())})")
         for column in ICD10_COLUMNS:  # a database made before the ICD-10 columns existed: add them (existing rows get NULL)
             self.con.execute(f"ALTER TABLE {TABLE} ADD COLUMN IF NOT EXISTS {column} {COLUMNS[column]}")
+
+    @property
+    def embedder(self) -> Embedder:
+        if self._embedder is None:
+            self._embedder = Embedder()
+        return self._embedder
 
     def close(self) -> None:
         self.con.close()
@@ -187,13 +198,67 @@ class RecordDB:
 
     # ------------------------------------------------------------ delete
     def delete_record(self, record_id: str) -> bool:
-        """Delete the record. Returns True if it existed, False if there was nothing to delete."""
-        return bool(self.con.execute(f"DELETE FROM {TABLE} WHERE record_id = ? RETURNING record_id",
-                                     [record_id]).fetchall())
+        """Delete the record, and its embedding in the same transaction. Returns True if it existed, False if there was nothing to delete."""
+        self.con.begin()
+        try:
+            found = bool(self.con.execute(f"DELETE FROM {TABLE} WHERE record_id = ? RETURNING record_id", [record_id]).fetchall())
+            self.con.execute(f"DELETE FROM {emb.TABLE} WHERE record_id = ?", [record_id])
+        except Exception:
+            self.con.rollback()
+            raise
+        self.con.commit()
+        return found
+
+    # ------------------------------------------------------------ embeddings (for the copilot's semantic search)
+    def embed_record(self, record_id: str) -> bool:
+        """Create or refresh the vector of one record: the call the web app makes after saving or editing it.
+        Returns True if a vector was written, False if it was already up to date or the record has no text to embed.
+        Raises RecordNotFoundError for an unknown record_id and EmbeddingError if the model cannot be reached
+        (the record itself is not affected; embed_pending catches up later)."""
+        record = self.read_record(record_id)
+        if record is None:
+            raise RecordNotFoundError(f"record {record_id!r} does not exist")
+        text = emb.embedding_text(record)
+        stored = self.con.execute(f"SELECT text_hash, model FROM {emb.TABLE} WHERE record_id = ?", [record_id]).fetchone()
+        if not text:
+            self.con.execute(f"DELETE FROM {emb.TABLE} WHERE record_id = ?", [record_id])
+            return False
+        digest = emb.text_hash(text)
+        if stored == (digest, self.embedder.model):
+            return False
+        vector = self.embedder.embed_documents([text])[0]
+        emb.store(self.con, self.embedder.model, [(record_id, vector, digest)])
+        return True
+
+    def embed_pending(self, *, progress=None) -> "emb.EmbeddingReport":
+        """Bring every vector up to date: create the missing ones, replace those whose text or model changed, drop those of
+        deleted records. Safe to repeat: it only does what is left to do. Run it after import_excel, or after changing
+        the embedding model. Each batch is saved as soon as it is computed, so if the model fails midway (EmbeddingError)
+        the work done is kept and a second call continues from there. `progress(done, total)` is called after each batch."""
+        todo, report = emb.collect(self.con, TABLE, self.embedder.model)
+        size = self.embedder.batch_size
+        for i in range(0, len(todo), size):
+            chunk = todo[i:i + size]
+            try:
+                vectors = self.embedder.embed_documents([text for _, text, _ in chunk])
+            except EmbeddingError as exc:
+                raise EmbeddingError(f"{exc} ({report.embedded} of {len(todo)} embedded before the failure; "
+                                     "call embed_pending() again to continue)") from exc
+            emb.store(self.con, self.embedder.model, [(rid, v, digest) for (rid, _, digest), v in zip(chunk, vectors)])
+            report.embedded += len(chunk)
+            if progress:
+                progress(report.embedded, len(todo))
+        return report
+
+    def embedding_status(self) -> dict:
+        """How far the vectors are: {"model", "records", "embedded", "pending"} (pending = missing, stale or empty-text excluded)."""
+        total = self.con.execute(f"SELECT count(*) FROM {TABLE}").fetchone()[0]
+        todo, report = emb.collect(self.con, TABLE, self.embedder.model)
+        return {"model": self.embedder.model, "records": total, "embedded": report.unchanged, "pending": len(todo)}
 
     # ------------------------------------------------------------ load the Excel
     def import_excel(self, path: str | Path, sheet: str | None = None, *, update_icd: bool = False,
-                     icd_mode: str = "missing", icd_output: str | Path | None = None) -> int:
+                     icd_mode: str = "missing", icd_output: str | Path | None = None, embed: bool = False) -> int:
         """Load every row of an Excel sheet (default: the first one) into the table; returns how many.
 
         update_icd=True first runs ICD10.update_icd10 on the Excel (docintel.data_transformation), so the records are stored with
@@ -201,11 +266,19 @@ class RecordDB:
         icd_output is the Excel to write the updated sheet to (may be `path` itself); without it the updated sheet is only
         used for the import and your Excel is left untouched. If the coding fails, nothing is imported.
 
+        embed=True then creates the embeddings of the records (embed_pending): the vectors the copilot's semantic search uses.
+        It needs the embedding model running; if it is not, the records ARE imported and EmbeddingError is raised at the end:
+        call embed_pending() once the model is up. Default False, like update_icd.
+
         The header must have the table's columns (the three ICD-10 ones may be missing, as in the first version of the
         Excel). Blank ICD-10 cells, and the 0 that some tools write in them, are stored as NULL. All rows go in one transaction: if one fails
         (e.g. a record_id that is already stored), none is added. Needs openpyxl."""
         if icd_output and not update_icd:
             raise ValueError("icd_output is only used with update_icd=True")
+        if embed:
+            count = self.import_excel(path, sheet, update_icd=update_icd, icd_mode=icd_mode, icd_output=icd_output)
+            self.embed_pending()
+            return count
         if update_icd:
             from .data_transformation import ICD10  # imported here: that module needs this one
 
