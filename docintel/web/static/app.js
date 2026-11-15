@@ -63,4 +63,50 @@
   // Esc closes the delete dialog (it is the "Cancelar" link).
   const cancel = document.querySelector('[data-cancel]');
   if (cancel) document.addEventListener('keydown', event => { if (event.key === 'Escape') location.href = cancel.href; });
+
+  // Copilot chat: each question is sent without leaving the page; the browser keeps the conversation and sends the last turns back.
+  const chatForm = document.querySelector('form[data-chat]');
+  if (chatForm) {
+    const log = document.getElementById('chat');
+    const input = chatForm.elements.question;
+    const history = [];
+    const bubble = (text, cls, html) => {
+      const el = document.createElement(html ? 'section' : 'div');
+      el.className = 'msg ' + cls + (html ? ' card' : '');
+      if (html) el.innerHTML = html; else el.textContent = text;
+      log.append(el);
+      return el;
+    };
+    const send = async (fields) => {
+      const body = new FormData();
+      Object.entries(fields).forEach(([k, v]) => body.append(k, v));
+      body.append('history', JSON.stringify(history.slice(-8)));
+      const r = await fetch('/copilot/ask', { method: 'POST', body });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    };
+    const wire = (el, question) => el.querySelectorAll('form[data-more]').forEach(f => f.addEventListener('submit', async event => {
+      event.preventDefault();
+      const data = Object.fromEntries(new FormData(f));
+      try { const out = await send(data); el.innerHTML = out.html; wire(el, question); } catch (e) { /* keep what is shown */ }
+    }));
+    chatForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      const question = input.value.trim();
+      if (!question) return;
+      bubble(question, 'me');
+      input.value = '';
+      const pending = bubble('', 'bot', '<p class="sub">Thinking…</p>');
+      try {
+        const out = await send({ question });
+        pending.innerHTML = out.html;
+        wire(pending, question);
+        if (out.plan) history.push({ question, plan: out.plan, reply: out.reply });
+      } catch (e) {
+        pending.innerHTML = '<p class="err" role="alert">The assistant could not be reached. Please try again.</p>';
+      }
+      pending.scrollIntoView({ block: 'nearest' });
+      input.focus();
+    });
+  }
 })();

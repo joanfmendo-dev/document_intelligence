@@ -90,3 +90,9 @@ th{color:#5B6573;font-size:13px}
   .doc{position:static;height:75vh}
   .wrap{padding:24px 16px}.bar{padding:0 16px;gap:16px}
 }
+
+/* copilot chat */
+.chat{display:flex;flex-direction:column;gap:12px;margin-bottom:16px}
+.msg.me{align-self:flex-end;max-width:80%;background:#2457D6;color:#fff;border-radius:12px;padding:10px 14px;font-size:14px;white-space:pre-wrap;overflow-wrap:anywhere}
+.msg.bot{margin:0;padding:16px 20px}
+.msg.bot>:first-child{margin-top:0}

@@ -104,9 +104,12 @@ def _validate(plan: Any, catalog: Catalog, today: date, value_exists) -> Query:
         query.agg_field = f
     group = agg.get("group_by")
     if group not in (None, ""):
-        if not isinstance(group, str) or group not in catalog or catalog.role(group) not in GROUPABLE or group in (LAB_NAME, LAB_FLAG):
-            raise _Ask(f"I can group by one of: {', '.join(n for n in catalog.filter_fields() if catalog.role(n) in GROUPABLE)}. Which one?")
-        query.group_by = group
+        if isinstance(group, str) and group in catalog and catalog.role(group) in GROUPABLE and group not in (LAB_NAME, LAB_FLAG):
+            query.group_by = group
+        else:  # the number the user asked for is still right without the grouping: give it, and say what was left out
+            shown = group if isinstance(group, str) else "that"
+            options = ", ".join(n for n in catalog.filter_fields() if catalog.role(n) in GROUPABLE)
+            query.warnings.append(f"I cannot group by “{shown}”, so this is the overall figure. I can group by: {options}.")
     top = agg.get("top_n")
     if top not in (None, ""):
         try:

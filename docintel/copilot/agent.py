@@ -59,13 +59,14 @@ class Copilot:
     def close(self) -> None:
         self.executor.close()
 
-    def ask(self, question: str, previous: dict | None = None, page: int = 1) -> Answer:
-        """Answer a question. `previous` is the `plan` of the previous answer when this is a follow-up."""
+    def ask(self, question: str, previous: dict | None = None, page: int = 1, history: list[dict] | None = None) -> Answer:
+        """Answer a question. `previous` is the `plan` of the previous answer when this is a follow-up; `history` is a chat
+        ([{"question", "plan", "reply"}, ...], oldest first) and, when given, takes its place: the model then sees the last turns."""
         question = (question or "").strip()
         if not question:
             return render(Query("clarify", message="What would you like to know about the records?"))
         try:
-            plan = self.planner.plan(question, previous)
+            plan = self.planner.plan(question, previous, history)
         except PlannerError:
             return render(Query("clarify", message=NOT_UNDERSTOOD))
         except LLMError:

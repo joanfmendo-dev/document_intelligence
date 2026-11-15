@@ -308,9 +308,40 @@ def create_app(*, db_path: str | Path | None = None, uploads_dir: str | Path | N
             found(None, "record")
         return go(f"/records?{urlencode({'ok': 'updated', 'id': record_id})}")
 
-    # ------------------------------------------------------------ the copilot
+    # ------------------------------------------------------------ the copilot (a chat)
+    MAX_HISTORY = 8
+
     def copilot_context(**extra) -> dict:
         return {**dict(active="copilot", question="", answer=None, previous="", plan_json="", examples=COPILOT_EXAMPLES), **extra}
+
+    def json_field(form, name: str, kinds: tuple):
+        try:
+            value = json.loads(form.get(name) or "null")
+        except ValueError:
+            raise HTTPException(400, "That request could not be read.")
+        if not isinstance(value, kinds):
+            raise HTTPException(400, "That request could not be read.")
+        return value
+
+    def ask_copilot(form: FormData):
+        """The question, the answer, and the plan to show: from a new question (with the chat so far, or just the previous plan)
+        or from a plan and a page ('show more': no call to the model)."""
+        question = str(form.get("question") or "")[:500]
+        previous = json_field(form, "previous", (dict, type(None)))
+        plan = json_field(form, "plan", (dict, type(None)))
+        history = json_field(form, "history", (list, type(None))) or []
+        try:
+            page = max(1, int(form.get("page") or 1))
+        except ValueError:
+            raise HTTPException(400, "That request could not be read.")
+        history = [h for h in history if isinstance(h, dict)][-MAX_HISTORY:]
+        db = open_db()
+        try:
+            copilot = Copilot.from_db(db, catalog_path=catalog_file, llm=copilot_llm)
+            answer = copilot.answer_plan(plan, page) if plan else copilot.ask(question, previous, history=history)
+        finally:
+            db.close()
+        return question, previous, answer
 
     @app.get("/copilot")
     def copilot_page(request: Request):
@@ -318,29 +349,19 @@ def create_app(*, db_path: str | Path | None = None, uploads_dir: str | Path | N
 
     @app.post("/copilot")
     def copilot_ask(request: Request, form: FormData = Depends(read_form)):
-        """Answer a question. With `previous` (the plan of the last answer) the question is a follow-up; with `plan` and `page`
-        it is the 'show more' button: the same plan, no new call to the model."""
-        question = str(form.get("question") or "")[:500]
-        try:
-            previous = json.loads(form.get("previous") or "null")
-            plan = json.loads(form.get("plan") or "null")
-            page = max(1, int(form.get("page") or 1))
-        except ValueError:
-            raise HTTPException(400, "That request could not be read.")
-        if not isinstance(previous, (dict, type(None))) or not isinstance(plan, (dict, type(None))):
-            raise HTTPException(400, "That request could not be read.")
-        db = open_db()
-        try:
-            copilot = Copilot.from_db(db, catalog_path=catalog_file, llm=copilot_llm)
-            answer = copilot.answer_plan(plan, page) if plan else copilot.ask(question, previous)
-        except LLMError:
-            answer = None
-        finally:
-            db.close()
-        shown = {"question": question, "answer": answer, "plan_json": json.dumps(answer.plan) if answer and answer.plan else ""}
-        # a clarification, an error or a refusal keeps the earlier plan, so the user's next message still refines it
-        keep = answer and answer.kind in ("clarify", "error", "out_of_scope", "help", "navigate")
-        shown["previous"] = json.dumps(previous) if keep and previous else shown["plan_json"] if answer and answer.kind in ("results", "aggregate") else ""
-        return render(request, "copilot.html", **copilot_context(**shown))
+        """Without JavaScript: one question per page, refined with the previous plan. (With JavaScript the page is a chat: /copilot/ask.)"""
+        question, previous, answer = ask_copilot(form)
+        plan_json = json.dumps(answer.plan) if answer.plan else ""
+        keep = answer.kind in ("clarify", "error", "out_of_scope", "help", "navigate")  # these keep the earlier plan for the next message
+        carried = json.dumps(previous) if keep and previous else plan_json if answer.kind in ("results", "aggregate") else ""
+        return render(request, "copilot.html", **copilot_context(question=question, answer=answer, plan_json=plan_json, previous=carried))
+
+    @app.post("/copilot/ask")
+    def copilot_chat(request: Request, form: FormData = Depends(read_form)):
+        """One turn of the chat: the answer as an HTML fragment, with what the page needs to send back next time."""
+        question, _, answer = ask_copilot(form)
+        plan_json = json.dumps(answer.plan) if answer.plan else ""
+        html = templates.get_template("_answer.html").render(request=request, answer=answer, question=question, plan_json=plan_json)
+        return JSONResponse({"html": html, "kind": answer.kind, "plan": answer.plan, "reply": answer.summary})
 
     return app

@@ -226,7 +226,8 @@ print(a.interpretation, a.summary)                   # cómo entendió la pregun
 b = cp.ask("only women", previous=a.plan)            # seguimiento: se pasa el plan anterior
 ```
 El **catálogo** (`catalog.yaml`: campos, roles, valores con conteos) lo genera `Catalog.build(con)` y lo mantiene la app web al guardar/editar/borrar; el copilot nunca lo escribe
-(si no existe, lo calcula en memoria). La web lo guarda junto a la base (`<base>.catalog.yaml`, o `catalog_path=`). Página: `/copilot`, con enlaces a cada registro y "Show more".
+(si no existe, lo calcula en memoria). La web lo guarda junto a la base (`<base>.catalog.yaml`, o `catalog_path=`). Página: `/copilot`, un **chat**: el navegador guarda la conversación y envía los últimos 4 turnos (pregunta, plan, respuesta mostrada) al planner, así una aclaración se puede contestar (`cp.ask(q, history=[{"question", "plan", "reply"}, ...])`). Sin JavaScript queda una pregunta por página, con el plan anterior. Hay enlaces a cada registro y "Show more".
+Un `group_by` imposible (p. ej. por prueba de laboratorio) no genera una pregunta: se da la cifra total y se avisa.
 Umbral semántico `SEMANTIC_MIN_SIMILARITY=0.6`: **sin calibrar**.
 
 ## 9. Evaluación

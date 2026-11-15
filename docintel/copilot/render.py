@@ -131,7 +131,8 @@ def render(query: Query, result: Result | None = None, page_size: int = 25) -> A
             ans.summary = f"{result.total} group{'s' if result.total != 1 else ''}." if result.total else "No records match."
         else:
             value = result.rows[0][result.columns[0]] if result.rows else None
-            ans.summary = f"{result.columns[0].replace('_', ' ')}: {_cell(value)}"
+            ans.summary = (f"{_cell(value)} record{'' if value == 1 else 's'} match." if query.metric == "count"
+                           else f"{result.columns[0].replace('_', ' ')}: {_cell(value)}")
         ans.text = "\n".join([ans.interpretation, ans.summary, *_table_text(ans.columns, ans.rows)[:50]] if query.group_by else [ans.interpretation, ans.summary])
     else:  # search
         ans.columns, ans.rows, ans.page = result.columns, result.rows, result.page

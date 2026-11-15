@@ -150,3 +150,21 @@ def test_editing_refreshes_the_vector_and_deleting_removes_it(env):
     env.client.post("/records/R001/delete")
     assert vectors(env) == {"R000"}
     assert "Cardiology" in env.catalog.read_text()
+
+
+def test_the_chat_endpoint_returns_a_fragment_and_uses_the_history(env):
+    seed(env, 3)
+    bad = {"intent": "aggregate", "filters": [], "aggregate": {"metric": "count", "group_by": "lab_results.test_name"}}
+    env.llm.replies = [bad]
+    out = env.client.post("/copilot/ask", data={"question": "How many patients were tested for creatinine?"}).json()
+    assert out["kind"] == "aggregate" and "3 records match." in out["html"] and "I cannot group by" in out["html"]
+    assert "<html" not in out["html"] and out["plan"]["intent"] == "aggregate"
+    env.llm.replies = [{"intent": "search", "filters": [{"field": "department", "op": "in", "value": ["Cardiology"]}]}]
+    history = [{"question": "How many?", "plan": out["plan"], "reply": out["reply"]}]
+    second = env.client.post("/copilot/ask", data={"question": "list them", "history": json.dumps(history)}).json()
+    assert second["kind"] == "results" and 'href="/records/R001/edit"' in second["html"]
+
+
+def test_the_chat_endpoint_rejects_a_bad_history(env):
+    assert env.client.post("/copilot/ask", data={"question": "x", "history": '{"a": 1}'}).status_code == 400
+    assert env.client.post("/copilot/ask", data={"question": "x", "history": "nope"}).status_code == 400

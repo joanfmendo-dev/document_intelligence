@@ -385,9 +385,16 @@ def test_aggregate_rules(catalog):
     assert (ok.metric, ok.agg_field, ok.group_by, ok.top_n) == ("avg", "age", "department", 3)
     assert v({"intent": "aggregate", "aggregate": {"metric": "count"}}, catalog).group_by is None
     for bad in (None, {}, {"metric": "sum"}, {"metric": "avg"}, {"metric": "avg", "field": "department"}, {"metric": "avg", "field": "salary"},
-                {"metric": "count", "group_by": "age"}, {"metric": "count", "group_by": ["sex", "department"]}, {"metric": "count", "group_by": "salary"},
                 {"metric": "count", "top_n": 0}, {"metric": "count", "top_n": 51}, {"metric": "count", "top_n": "many"}):
         assert v({"intent": "aggregate", "aggregate": bad}, catalog).intent == "clarify", bad
+
+
+def test_a_group_by_that_cannot_be_used_is_dropped_and_said(catalog):
+    """"How many patients were tested for creatinine?" must give the number, not a question about grouping."""
+    for bad in ("age", ["sex", "department"], "salary", "lab_results.test_name", "patient"):
+        q = v({"intent": "aggregate", "filters": [], "aggregate": {"metric": "count", "group_by": bad}}, catalog)
+        assert (q.intent, q.group_by) == ("aggregate", None), bad
+        assert q.warnings and "overall figure" in q.warnings[0] and "department" in q.warnings[0]
 
 
 def test_records_navigation_help_and_refusals(catalog):
@@ -640,7 +647,7 @@ def test_no_number_in_an_answer_can_come_from_anywhere_but_the_result(db):
     a = run(db, {"intent": "aggregate", "filters": [], "aggregate": {"metric": "count", "group_by": "sex"}})
     assert "Female | 6" in a.text and "Male | 5" in a.text and "(none) | 1" in a.text
     a = run(db, {"intent": "aggregate", "filters": [], "aggregate": {"metric": "count"}})
-    assert a.summary == "count: 12"
+    assert a.summary == "12 records match."
 
 
 # ================================================================ planner
@@ -747,3 +754,34 @@ def test_the_catalog_file_is_used_when_it_exists_and_never_written_by_the_copilo
     c = Copilot.open(path, catalog_path=tmp_path / "missing.yaml", llm=FakeLLM())  # no file: profiled in memory, nothing written
     c.close()
     assert not (tmp_path / "missing.yaml").exists()
+
+
+def test_the_planner_sees_the_earlier_turns_of_the_chat(catalog):
+    llm = FakeLLM({"intent": "clarify", "question": "x"})
+    history = [{"question": "How many tests?", "plan": {"intent": "aggregate", "aggregate": {"metric": "count", "group_by": "lab_results"}},
+                "reply": "Which one?"}]
+    Planner(catalog, llm).plan("no grouping, just the number", None, history)
+    messages = llm.calls[0][0]
+    assert [m["role"] for m in messages] == ["system", "user", "assistant", "user"]
+    assert "How many tests?" in messages[1]["content"] and "group_by" in messages[2]["content"]
+    assert "The user was shown: Which one?" in messages[3]["content"] and "no grouping" in messages[3]["content"]
+    assert "How many patients were tested for glucose?" in messages[0]["content"]  # the prompt's example for this kind of question
+
+
+def test_a_count_of_tested_patients_gives_the_number_at_once(db):
+    """The question that used to end in 'I can group by one of...': a bad group_by is dropped, the number is given."""
+    plan = {"intent": "aggregate", "filters": [f("lab_results", "has", {"test_name": ["Troponin I"]})],
+            "aggregate": {"metric": "count", "field": None, "group_by": "lab_results.test_name", "top_n": None}}
+    a = run(db, plan)
+    assert a.kind == "aggregate" and a.summary.endswith("match.") and "I cannot group by" in a.text
+    assert a.rows == [{"count": a.rows[0]["count"]}] and a.rows[0]["count"] > 0
+
+
+def test_the_chat_history_is_used_and_a_clarification_can_be_answered(db):
+    llm = FakeLLM({"intent": "clarify", "question": "Which department?"},
+                  {"intent": "search", "filters": [f("department", "in", ["Cardiology"])]})
+    c = Copilot.from_db(db, llm=llm, embedder=KeywordEmbedder(), today=TODAY)
+    a1 = c.ask("show patients")
+    assert a1.kind == "clarify"
+    a2 = c.ask("Cardiology", history=[{"question": "show patients", "plan": a1.plan, "reply": a1.summary}])
+    assert a2.kind == "results" and "The user was shown: Which department?" in llm.calls[1][0][-1]["content"]
