@@ -45,6 +45,8 @@ OPS_BY_ROLE = {
     "list_of_objects": ("has",),
     "icd10_hierarchy": ("eq", "in"),
 }
+MENTION_STOP = {"patients", "patient", "records", "record", "tested", "which", "where", "there", "these", "those", "about", "their", "since",
+                "between", "during", "number", "total", "average", "other", "show", "found", "visit", "visits", "chart"}
 GROUPABLE = {"categorical", "icd10_hierarchy"}
 NUMERIC = {"integer", "measurement"}
 ALL_OPS = ("eq", "in", "contains", "gt", "gte", "lt", "lte", "between", "has")
@@ -63,7 +65,7 @@ VITALS = {
 }
 
 DESCRIPTIONS = {
-    "record_id": ("identifier", "Unique record identifier, for example SYNUS-2026-0001."),
+    "record_id": ("identifier", "Unique record identifier, for example ABC-2030-0042."),
     "department": ("categorical", "Clinical department that handled the encounter."),
     "patient_name": ("name", "Full name of the patient."),
     "dob": ("date", "Patient's date of birth."),
@@ -171,12 +173,29 @@ class Catalog:
         return found[:n]
 
     def expand_test_names(self, text: str) -> list[str]:
-        """Lab test names that `text` stands for: the exact name, or every name containing it ('Troponin' -> both variants)."""
+        """Lab test names that `text` stands for: the exact name and its variants ('Glucose' -> 'Glucose (point-of-care)'), or every name containing it ('Troponin' -> both variants)."""
         exact = self.canonical(LAB_NAME, text)
-        if exact:
-            return [exact]
+        names = self.values(LAB_NAME) or {}
+        if exact:  # 'Glucose' also stands for 'Glucose (point-of-care)': names that continue it after a separator
+            base = exact.casefold()
+            variants = [v for v in names if v != exact and v.casefold().startswith(base) and not v[len(base):len(base) + 1].isalnum()]
+            return [exact, *variants]
         wanted = str(text).strip().casefold()
-        return [v for v in (self.values(LAB_NAME) or {}) if wanted and wanted in v.casefold()]
+        return [v for v in names if wanted and wanted in v.casefold()]
+
+    def mentions(self, question: str) -> dict[str, list[tuple[str, str]]]:
+        """Words of the question that name a value in the catalog (a lab test, a department, a city...): {word: [(field, value), ...]}.
+        Words of 5+ letters only, compared with the words of each value ('creatinine' names 'Creatinine'), so a short or
+        common word does not match by accident. Used to check that a plan did not drop something the user said."""
+        words = {w for w in re.findall(r"[a-z]{5,}", question.lower())} - MENTION_STOP
+        found: dict[str, list[tuple[str, str]]] = {}
+        for name, col in self.columns.items():
+            for value in col.values or {}:
+                tokens = re.findall(r"[a-z]{5,}", str(value).lower())
+                for w in words:
+                    if any(tok == w or tok.startswith(w) or w.startswith(tok) for tok in tokens):
+                        found.setdefault(w, []).append((name, str(value)))
+        return found
 
     # ------------------------------------------------------------------ for the model
     def prompt_text(self, question: str = "", max_values: int = 50) -> str:

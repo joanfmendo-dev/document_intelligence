@@ -12,7 +12,7 @@ import os
 
 class Settings:
     # text model: turns extracted text into structured fields (get_fields)
-    LLM_MODEL = os.getenv("DOCINTEL_LLM_MODEL", "ollama_chat/gemma3:4b")
+    LLM_MODEL = os.getenv("DOCINTEL_LLM_MODEL", "ollama_chat/gemma4:e2b")
     LLM_API_KEY = os.getenv("DOCINTEL_LLM_API_KEY", "")
     LLM_BASE_URL = os.getenv("DOCINTEL_LLM_BASE_URL", "")  # "" = provider default (Ollama: localhost:11434)
 
@@ -34,6 +34,7 @@ class Settings:
     CATALOG_MAX_VALUES = 100              # a column with more distinct values than this does not list them
     COPILOT_PAGE_SIZE = 25                # rows shown per answer
     SEMANTIC_TOP_K = 50                   # most candidates a semantic search returns
+    SEMANTIC_RELATIVE_MARGIN = float(os.getenv("DOCINTEL_SEMANTIC_RELATIVE_MARGIN", "0.05"))  # keep hits within this of the best score
     SEMANTIC_MIN_SIMILARITY = float(os.getenv("DOCINTEL_SEMANTIC_MIN_SIMILARITY", "0.6"))  # to calibrate with the golden set
 
     # evaluation (docintel.evaluation): the judge is a commercial model, used offline and only on synthetic data

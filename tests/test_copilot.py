@@ -224,7 +224,7 @@ def test_suggestions_and_test_name_expansion(catalog):
     assert catalog.suggest("department", "Cardiologia") == ["Cardiology"]
     assert catalog.suggest("department", "Pulmon") == ["Pulmonology"]
     assert catalog.expand_test_names("Troponin") == ["Troponin I", "Troponin I (initial)"]
-    assert catalog.expand_test_names("troponin i") == ["Troponin I"]  # an exact name (any case) is not expanded
+    assert catalog.expand_test_names("troponin i") == ["Troponin I", "Troponin I (initial)"]  # an exact name (any case) also brings its variants
     assert catalog.expand_test_names("Potassium") == []
 
 
@@ -351,7 +351,7 @@ def test_numbers_are_checked_and_units_converted(catalog):
 
 def test_lab_filters(catalog):
     q = v({"intent": "search", "filters": [f("lab_results", "has", {"test_name": ["troponin i"], "flag": ["high"]})]}, catalog)
-    assert q.filters[0].value == {"test_name": ["Troponin I"], "flag": ["High"]} and not q.warnings
+    assert q.filters[0].value == {"test_name": ["Troponin I", "Troponin I (initial)"], "flag": ["High"]} and "matches" in q.warnings[0]
     q = v({"intent": "search", "filters": [f("lab_results", "has", {"test_name": ["Troponin"]})]}, catalog)
     assert q.filters[0].value["test_name"] == ["Troponin I", "Troponin I (initial)"] and "matches" in q.warnings[0]
     assert q.filters[0].label == "lab: Troponin I / Troponin I (initial)"
@@ -607,7 +607,7 @@ def test_a_read_only_connection_cannot_change_data_or_read_files(tmp_path):
 def test_the_search_answer_says_how_it_was_understood_and_how_many(db):
     a = run(db, {"intent": "search", "filters": [f("department", "in", ["Cardiology"]), f("age", "gt", 60),
                                                   f("lab_results", "has", {"test_name": ["Troponin I"], "flag": ["High"]})]})
-    assert a.interpretation == "department: Cardiology · age > 60 · lab: Troponin I flagged High"
+    assert a.interpretation == "department: Cardiology · age > 60 · lab: Troponin I / Troponin I (initial) flagged High"
     assert a.summary == "2 records found."
     assert a.text.splitlines()[0] == a.interpretation and "R001 | Patient 1 | Cardiology | 2026-03-10 | 70 | NSTEMI" in a.text
     one = run(db, {"intent": "search", "filters": [f("record_id", "eq", "R001")]})
@@ -785,3 +785,165 @@ def test_the_chat_history_is_used_and_a_clarification_can_be_answered(db):
     assert a1.kind == "clarify"
     a2 = c.ask("Cardiology", history=[{"question": "show patients", "plan": a1.plan, "reply": a1.summary}])
     assert a2.kind == "results" and "The user was shown: Which department?" in llm.calls[1][0][-1]["content"]
+
+
+def test_the_answer_keeps_a_trace_of_everything_that_was_done(db):
+    plan = {"intent": "aggregate", "filters": [f("lab_results", "has", {"test_name": ["Troponin"]})],
+            "aggregate": {"metric": "count", "field": None, "group_by": "lab_results.test_name", "top_n": None}}
+    llm = FakeLLM(plan)
+    c = Copilot.from_db(db, llm=llm, embedder=KeywordEmbedder(), today=TODAY)
+    a = c.ask("How many patients were tested for troponin?")
+    steps = [s["step"] for s in a.trace]
+    assert steps[:3] == ["llm", "plan", "validation"] and steps[-1] == "sql"
+    call = a.trace[0]
+    assert call["reply"] == json.dumps(plan) and call["messages"][-1]["content"] == "Question: How many patients were tested for troponin?"
+    sql = a.trace[-1]
+    assert sql["sql"].startswith("SELECT count(*) AS value FROM medical_records m WHERE EXISTS") and "?" in sql["sql"]
+    assert sql["params"] and all(p in ("Troponin I", "Troponin T", "High-Sensitivity Troponin T") or isinstance(p, str) for p in sql["params"])
+    assert sql["rows"] == 1
+    validation = a.trace[steps.index("validation")]
+    assert validation["result"] == "ok" and any("cannot group by" in w for w in validation["warnings"])
+    text = a.explain()
+    assert "LLM call 1" in text and "Plan:" in text and "SQL (1 row" in text and "params:" in text
+
+
+def test_the_trace_shows_unusable_replies_and_a_down_model(db):
+    c = Copilot.from_db(db, llm=FakeLLM("not json", "still not json"), embedder=KeywordEmbedder(), today=TODAY)
+    a = c.ask("anything")
+    assert a.kind == "clarify" and [s["step"] for s in a.trace] == ["llm", "llm"] and "unusable" in a.explain()
+    c = Copilot.from_db(db, llm=FakeLLM(LLMError("down")), embedder=KeywordEmbedder(), today=TODAY)
+    a = c.ask("anything")
+    assert a.kind == "error" and "ERROR" in a.explain() and "LLMError: down" in a.explain()
+
+
+def test_a_semantic_search_traces_the_embedding_and_hides_the_vector(db):
+    class Wide(KeywordEmbedder):
+        def embed_query(self, text):
+            return super().embed_query(text) + [0.0] * 20  # longer than the 8 values the trace prints
+
+        def embed_documents(self, texts):
+            return [v + [0.0] * 20 for v in super().embed_documents(texts)]
+    wide = RecordDB(":memory:", embedder=Wide())
+    for r in SEED:
+        wide.create_record(r)
+    wide.embed_pending()
+    plan = {"intent": "search", "filters": [], "text_query": "trouble breathing"}
+    a = Copilot.from_db(wide, llm=FakeLLM(plan), embedder=Wide(), today=TODAY).ask("trouble breathing")
+    wide.close()
+    kinds = [s["step"] for s in a.trace]
+    assert any(isinstance(p, str) and p.startswith("<list of") for s in a.trace if s["step"] == "sql" for p in s["params"])
+    assert "embedding" in kinds and kinds.index("embedding") < kinds.index("sql")
+    assert not any(isinstance(p, list) and len(p) > 8 for s in a.trace if s["step"] == "sql" for p in s["params"])
+
+
+def test_show_more_has_a_trace_without_a_model_call(db):
+    plan = {"intent": "search", "filters": [f("department", "in", ["Cardiology"])]}
+    a = Copilot.from_db(db, llm=FakeLLM(), embedder=KeywordEmbedder(), today=TODAY).answer_plan(plan)
+    assert [s["step"] for s in a.trace][:2] == ["plan", "validation"] and "llm" not in [s["step"] for s in a.trace]
+
+
+# ---- holes found with a real model: a plan that drops what the user said, and fields that do not apply
+BAD_COUNT = {"intent": "aggregate", "filters": [], "aggregate": {"metric": "count", "field": "lab_results.test_name", "group_by": None, "top_n": None},
+             "topic": "search_examples"}
+GOOD_COUNT = {"intent": "aggregate", "filters": [f("lab_results", "has", {"test_name": ["Troponin"]})],
+              "aggregate": {"metric": "count", "field": None, "group_by": None, "top_n": None}}
+
+
+def test_the_validator_says_what_it_ignores(catalog):
+    q = v(BAD_COUNT, catalog)
+    assert q.intent == "aggregate" and q.agg_field is None
+    assert any("ignored “lab_results.test_name”" in w for w in q.warnings)
+    assert any("do not apply here: topic" in w for w in q.warnings)
+    assert any("No condition was applied" in w for w in q.warnings)
+    # a grouped count over everything is a normal question; a plan with empty extras is clean
+    clean = v({"intent": "aggregate", "filters": [], "aggregate": {"metric": "count", "group_by": "sex"}, "topic": None, "record_id": ""}, catalog)
+    assert clean.warnings == []
+
+
+def test_the_catalog_finds_the_values_a_question_names(catalog):
+    found = catalog.mentions("How many patients were tested for troponin in Cardiology?")
+    assert {"troponin", "cardiology"} <= set(found) and "patients" not in found and "tested" not in found
+    assert any(field == "lab_results.test_name" for field, _ in found["troponin"])
+    assert catalog.mentions("How many records are there?") == {}
+
+
+def test_a_plan_that_drops_a_test_is_sent_back_once_and_corrected(db):
+    llm = FakeLLM(BAD_COUNT, GOOD_COUNT)
+    a = Copilot.from_db(db, llm=llm, embedder=KeywordEmbedder(), today=TODAY).ask("How many patients were tested for troponin?")
+    assert a.kind == "aggregate" and a.plan == GOOD_COUNT and "No condition" not in a.text
+    assert a.rows[0]["count"] < 12 and len(llm.calls) == 2
+    retry = llm.calls[1][0]
+    assert [m["role"] for m in retry[-2:]] == ["assistant", "user"] and "does not use “troponin”" in retry[-1]["content"]
+    assert [s["step"] for s in a.trace][:4] == ["llm", "llm", "check", "plan"] and a.trace[2]["action"] == "asked the model again"
+
+
+def test_if_the_model_still_drops_it_the_answer_says_so(db):
+    a = Copilot.from_db(db, llm=FakeLLM(BAD_COUNT, BAD_COUNT), embedder=KeywordEmbedder(), today=TODAY).ask("How many patients were tested for troponin?")
+    assert a.kind == "aggregate" and "12 records match." in a.summary
+    assert "mentions “troponin”, but no condition uses it" in a.text
+
+
+def test_a_failed_retry_keeps_the_first_plan_with_a_note(db):
+    llm = FakeLLM(BAD_COUNT, LLMError("down"))
+    a = Copilot.from_db(db, llm=llm, embedder=KeywordEmbedder(), today=TODAY).ask("How many patients were tested for troponin?")
+    assert a.kind == "aggregate" and "no condition uses it" in a.text and a.trace[2]["action"] == "kept the plan"
+
+
+def test_a_plan_that_uses_what_the_user_said_is_not_questioned(db):
+    llm = FakeLLM(GOOD_COUNT)
+    a = Copilot.from_db(db, llm=llm, embedder=KeywordEmbedder(), today=TODAY).ask("How many patients were tested for troponin?")
+    assert len(llm.calls) == 1 and "check" not in [s["step"] for s in a.trace]
+
+
+def test_a_word_covered_by_a_field_the_plan_uses_is_not_missing(db, monkeypatch):
+    """"Oxygen saturation below 92%" names a lab test AND the SpO2 vital sign; filtering on the vital sign is a correct plan."""
+    c = Copilot.from_db(db, llm=FakeLLM(), embedder=KeywordEmbedder(), today=TODAY)
+    monkeypatch.setattr(c.catalog, "mentions", lambda q: {"oxygen": [("lab_results.test_name", "Oxygen Saturation (room air)")]})
+    assert c._missing("Oxygen saturation below 92%", {"intent": "search", "filters": [f("vital_signs.sp02", "lt", 92)]}) == []
+    assert c._missing("Oxygen saturation below 92%", {"intent": "search", "filters": [f("sex", "eq", "Male")]}) == ["oxygen"]
+
+
+# ================================================================ corrections after the first runs with real models
+def test_a_period_written_as_last_n_days_is_understood():
+    assert dates.expand({"last_n_days": 30}, TODAY) == dates.expand({"token": "last_n_days", "n": 30}, TODAY)
+    with pytest.raises(dates.BadPeriod):
+        dates.expand({"last_n_days": "many"}, TODAY)
+
+
+def test_a_record_count_copied_from_the_catalog_is_dropped(catalog):
+    q = v({"intent": "search", "filters": [f("department", "in", ["Cardiology (5)"])]}, catalog)
+    assert q.filters[0].value == ["Cardiology"]
+    q = v({"intent": "search", "filters": [f("lab_results", "has", {"test_name": ["Troponin I (4)"]})]}, catalog)
+    assert q.filters[0].value["test_name"][0] == "Troponin I"
+    q = v({"intent": "search", "filters": [f("lab_results", "has", {"test_name": ["Troponin I (initial)"]})]}, catalog)
+    assert q.filters[0].value["test_name"] == ["Troponin I (initial)"]  # a real parenthesis stays
+    assert v({"intent": "search", "filters": [f("department", "in", ["Nowhere (3)"])]}, catalog).intent == "clarify"
+
+
+def test_the_prompt_gives_todays_date_and_no_literal_year_to_copy(catalog):
+    text = Planner(catalog, FakeLLM(), today=date(2026, 11, 13)).messages("patients this year")[0]["content"]
+    assert "Today is 2026-11-13" in text and '{"year": 2025}' not in text and "{TODAY}" not in text
+    assert "SYNUS-2026-0001" not in text and "never the number in parentheses" in text
+
+
+def test_a_partial_record_id_finds_its_record(db):
+    db.con.execute("UPDATE medical_records SET record_id = 'SYNUS-2026-0007' WHERE record_id = 'R007'")
+    db.con.execute("UPDATE medical_records SET record_id = 'SYNUS-2025-0007' WHERE record_id = 'R008'")
+    db.con.execute("UPDATE medical_records SET record_id = 'SYNUS-2026-0003' WHERE record_id = 'R003'")
+    a = run(db, {"intent": "get_record", "record_id": "0003"})
+    assert a.kind == "record" and a.result.record["record_id"] == "SYNUS-2026-0003"
+    a = run(db, {"intent": "get_record", "record_id": "0007"})  # fits two records: ask which
+    assert a.kind == "clarify" and a.suggestions == ["SYNUS-2025-0007", "SYNUS-2026-0007"]
+    assert run(db, {"intent": "get_record", "record_id": "9999"}).summary == "There is no record 9999."
+
+
+def test_semantic_hits_far_below_the_best_one_are_cut(db, monkeypatch):
+    monkeypatch.setattr(s, "SEMANTIC_MIN_SIMILARITY", 0.0)
+    monkeypatch.setattr(s, "SEMANTIC_RELATIVE_MARGIN", None)
+    wide = run(db, {"intent": "search", "text_query": "chest and fever"}).result.total
+    monkeypatch.setattr(s, "SEMANTIC_RELATIVE_MARGIN", 0.01)
+    narrow = run(db, {"intent": "search", "text_query": "chest and fever"})
+    assert 0 < narrow.result.total < wide
+    best = max(narrow.result.scores.values())
+    assert all(sc >= best - 0.01 for sc in narrow.result.scores.values())
+    assert any(st.get("step") == "semantic_filter" and st["kept"] == narrow.result.total for st in narrow.trace)

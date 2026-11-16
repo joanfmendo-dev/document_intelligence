@@ -8,6 +8,7 @@ file access switched off, so even a bug here could not change a record or read a
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -108,6 +109,7 @@ class Executor:
         self._embedder = embedder
         self.page_size = page_size or s.COPILOT_PAGE_SIZE
         self._columns: list[str] | None = None
+        self.log: list[dict] = []  # every statement run and the embedding calls, in order (the agent copies it into the answer's trace)
 
     @classmethod
     def open(cls, path: str | Path, **kw) -> "Executor":
@@ -134,7 +136,11 @@ class Executor:
     def _select(self, sql: str, params: list | tuple = ()) -> list[tuple]:
         if not re.match(r"^\s*(SELECT|WITH)\b", sql, re.I) or ";" in sql:
             raise ValueError("the copilot only runs a single SELECT")
-        return self.con.execute(sql, list(params)).fetchall()
+        started = time.perf_counter()
+        rows = self.con.execute(sql, list(params)).fetchall()
+        shown = [p if not isinstance(p, list) or len(p) <= 8 else f"<list of {len(p)} numbers>" for p in params]  # an embedding is not worth printing
+        self.log.append({"step": "sql", "sql": " ".join(sql.split()), "params": shown, "rows": len(rows), "seconds": round(time.perf_counter() - started, 3)})
+        return rows
 
     # ------------------------------------------------------------------ the live fallback of the validator
     def value_exists(self, name: str, text: str) -> str | None:
@@ -159,6 +165,15 @@ class Executor:
 
     def _record(self, record_id: str) -> Result:
         row = self._select(f"SELECT {', '.join(self.columns)} FROM {TABLE} WHERE record_id = ?", [record_id])
+        if not row and record_id.strip():  # a partial id ('0007') names the record whose id ends with it ('SYNUS-2026-0007')
+            tail = record_id.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            found = [r[0] for r in self._select(f"SELECT record_id FROM {TABLE} WHERE record_id LIKE ? ESCAPE '\\' ORDER BY record_id LIMIT 6",
+                                                ["%-" + tail])]
+            if len(found) > 1:  # ambiguous: the caller asks which one
+                return Result("record", total=0, ids=found)
+            if found:
+                record_id = found[0]
+                row = self._select(f"SELECT {', '.join(self.columns)} FROM {TABLE} WHERE record_id = ?", [record_id])
         record = {c: _from_db(c, v) for c, v in zip(self.columns, row[0])} if row else None
         return Result("record", total=1 if record else 0, ids=[record_id] if record else [], record=record, rows=[record] if record else [])
 
@@ -168,15 +183,24 @@ class Executor:
         scores: dict[str, float] = {}
         coverage = None
         if query.text_query:
+            started = time.perf_counter()
             vector = self.embedder.embed_query(query.text_query)  # raises EmbeddingError if the model is down
+            self.log.append({"step": "embedding", "model": self.embedder.model, "text": query.text_query, "dimensions": len(vector),
+                             "seconds": round(time.perf_counter() - started, 3)})
             rows = self._select(
                 f"SELECT m.record_id, h.score FROM {TABLE} m JOIN (SELECT record_id, list_cosine_similarity(embedding, ?::FLOAT[]) AS score "
                 f"FROM {emb.TABLE} WHERE model = ?) h ON h.record_id = m.record_id WHERE h.score >= ?{extra} "
                 f"ORDER BY h.score DESC, m.record_id LIMIT ?",
                 [vector, self.embedder.model, s.SEMANTIC_MIN_SIMILARITY, *params, s.SEMANTIC_TOP_K])
+            raw_hits = len(rows)
+            if rows and s.SEMANTIC_RELATIVE_MARGIN is not None:  # scores of this embedding model are compressed: keep what is near the best
+                cutoff = float(rows[0][1]) - s.SEMANTIC_RELATIVE_MARGIN
+                rows = [r for r in rows if float(r[1]) >= cutoff]
             ids = [r[0] for r in rows]
             scores = {r[0]: float(r[1]) for r in rows}
             total, capped = len(ids), False
+            self.log.append({"step": "semantic_filter", "above_min_similarity": raw_hits, "kept": len(rows),
+                             "min_similarity": s.SEMANTIC_MIN_SIMILARITY, "relative_margin": s.SEMANTIC_RELATIVE_MARGIN})
             done = self._select(f"SELECT count(*) FROM {emb.TABLE} WHERE model = ?", [self.embedder.model])[0][0]
             coverage = (done, self._select(f"SELECT count(*) FROM {TABLE}")[0][0])
         else:

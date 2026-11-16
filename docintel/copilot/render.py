@@ -6,6 +6,7 @@ asked. Fixed messages cover help, refusals and navigation.
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from urllib.parse import quote, urlencode
 
@@ -53,6 +54,35 @@ class Answer:
     result: Result | None = None
     page: int = 1
     has_more: bool = False
+    trace: list[dict] = field(default_factory=list)      # what was done to get this answer, in order (see explain())
+
+    def explain(self, system_chars: int = 300) -> str:
+        """The trace as readable text: the model's raw replies, the plan, the validated query and every SQL statement with its parameters."""
+        out = []
+        for i, s in enumerate(self.trace, 1):
+            kind = s["step"]
+            if kind == "llm":
+                out.append(f"{i}. LLM call {s['attempt']} ({s.get('seconds', '?')} s)")
+                for m in s["messages"]:
+                    text = m["content"] if m["role"] != "system" else m["content"][:system_chars] + f"… [system prompt, {len(m['content'])} characters]"
+                    out.append(f"   [{m['role']}] {text}")
+                out.append(f"   -> {s.get('reply') if 'reply' in s else 'ERROR ' + s.get('error', '')}")
+                if s.get("error") and "reply" in s:
+                    out.append(f"   unusable: {s['error']}")
+            elif kind == "plan":
+                out.append(f"{i}. Plan: {json.dumps(s['plan'], ensure_ascii=False)}")
+            elif kind == "validation":
+                out.append(f"{i}. Validation: {s['result']}")
+                out += [f"   query: {s['query']}"] if s.get("query") else []
+                out += [f"   note: {w}" for w in s.get("warnings", [])]
+            elif kind == "sql":
+                out.append(f"{i}. SQL ({s['rows']} row{'' if s['rows'] == 1 else 's'}, {s['seconds']} s): {s['sql']}")
+                out.append(f"   params: {s['params']}")
+            elif kind == "embedding":
+                out.append(f"{i}. Embedding of the question with {s['model']}: {s['text']!r} ({s['dimensions']} dimensions, {s['seconds']} s)")
+            else:
+                out.append(f"{i}. {kind}: {s}")
+        return "\n".join(out)
 
 
 def interpretation(query: Query) -> str:
@@ -117,7 +147,11 @@ def render(query: Query, result: Result | None = None, page_size: int = 25) -> A
         ans.text = ans.summary + "".join("\n" + n for n in ans.notes)
     elif query.intent == "get_record":
         ans.kind = "record"
-        if result is None or result.record is None:
+        if result is not None and result.record is None and result.ids:  # a partial id that fits several records
+            ans.kind = "clarify"
+            ans.summary = f"“{query.record_id}” fits {len(result.ids)} records. Which one do you mean?"
+            ans.suggestions = list(result.ids)
+        elif result is None or result.record is None:
             ans.summary = f"There is no record {query.record_id}."
         else:
             r = result.record

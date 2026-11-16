@@ -56,6 +56,8 @@ def expand(period, today: date) -> tuple[date, date]:
                 raise BadPeriod(f"the range starts ({start}) after it ends ({last})")
             return start, last + timedelta(days=1)
         token = period.get("token")
+        if token is None and "last_n_days" in period:  # {"last_n_days": 30} means {"token": "last_n_days", "n": 30}
+            token, period = "last_n_days", {"n": period["last_n_days"]}
         if token == "this_year":
             return date(today.year, 1, 1), date(today.year + 1, 1, 1)
         if token == "last_year":

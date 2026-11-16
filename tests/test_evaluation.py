@@ -174,7 +174,7 @@ class PlanByQuestion:
         self.plans = plans
 
     def run(self, messages, **params):
-        reply = self.plans[messages[-1]["content"].split("uestion: ")[-1].strip()]
+        reply = self.plans[messages[1]["content"].split("uestion: ")[-1].strip()]
         if isinstance(reply, Exception):
             raise reply
         return json.dumps(reply)

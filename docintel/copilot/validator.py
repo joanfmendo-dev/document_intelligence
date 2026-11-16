@@ -27,6 +27,9 @@ AGE_RANGE = (0, 120)
 OP_WORDS = {"gt": ">", "gte": "≥", "lt": "<", "lte": "≤", "eq": "="}
 
 
+_OWN_KEYS = {"search": {"intent", "filters", "text_query"}, "aggregate": {"intent", "filters", "text_query", "aggregate"}}
+
+
 class _Ask(Exception):
     """Internal: stop validating and ask the user."""
 
@@ -78,6 +81,9 @@ def _validate(plan: Any, catalog: Catalog, today: date, value_exists) -> Query:
         return query
 
     # search / aggregate
+    ignored = sorted(k for k, v in plan.items() if k not in _OWN_KEYS[intent] and v not in (None, "", [], {}))
+    if ignored:  # parts that belong to another intent (a "topic" on a count): they change nothing, but the user should know
+        query.warnings.append(f"I ignored parts of the plan that do not apply here: {', '.join(ignored)}.")
     query.filters = _filters(plan.get("filters"), catalog, today, value_exists, query)
     text = plan.get("text_query")
     if text is not None and str(text).strip():
@@ -96,6 +102,8 @@ def _validate(plan: Any, catalog: Catalog, today: date, value_exists) -> Query:
     if metric not in METRICS:
         raise _Ask("What would you like to calculate: a count, an average, a minimum or a maximum?")
     query.metric = metric
+    if metric == "count" and agg.get("field") not in (None, ""):
+        query.warnings.append(f"A count does not use a field, so I ignored “{agg['field']}”.")
     if metric != "count":
         f = agg.get("field")
         if f not in catalog or catalog.role(f) not in NUMERIC:
@@ -110,6 +118,8 @@ def _validate(plan: Any, catalog: Catalog, today: date, value_exists) -> Query:
             shown = group if isinstance(group, str) else "that"
             options = ", ".join(n for n in catalog.filter_fields() if catalog.role(n) in GROUPABLE)
             query.warnings.append(f"I cannot group by “{shown}”, so this is the overall figure. I can group by: {options}.")
+    if not query.filters and not query.text_query and not query.group_by:
+        query.warnings.append("No condition was applied, so this covers all the records.")
     top = agg.get("top_n")
     if top not in (None, ""):
         try:
@@ -124,7 +134,7 @@ def _validate(plan: Any, catalog: Catalog, today: date, value_exists) -> Query:
 
 def _record_id(value: Any) -> str:
     if not isinstance(value, str) or not RECORD_ID.match(value.strip()):
-        raise _Ask("Which record? Give me its ID, for example SYNUS-2026-0001.")
+        raise _Ask("Which record? Give me its ID.")
     return value.strip()
 
 
@@ -184,6 +194,7 @@ def _one(name: str, op: str, value: Any, catalog: Catalog, today: date, value_ex
 
 def _known(name: str, text: str, catalog: Catalog, value_exists) -> str:
     """The stored spelling of a categorical value, or ask. Case differences are not a different value; anything else is asked."""
+    text = _without_count(text, name, catalog)
     found = catalog.canonical(name, text)
     if found:
         return found
@@ -199,6 +210,15 @@ def _known(name: str, text: str, catalog: Catalog, value_exists) -> str:
     if near:
         raise _Ask(f"I do not see “{text}” in {name.replace('_', ' ')}. Did you mean {_or(near)}?", near)
     raise _Ask(f"There is no {name.replace('_', ' ')} called “{text}” in the records.")
+
+
+def _without_count(text: str, name: str, catalog: Catalog) -> str:
+    """'Cardiology (54)' -> 'Cardiology': the prompt shows record counts in parentheses and small models copy them. Only when the
+    text without the count is a real value, so 'Troponin I (initial)' stays as it is."""
+    if catalog.canonical(name, text):
+        return text
+    bare = re.sub(r"\s*\(\d+\)\s*$", "", text)
+    return bare if bare != text and catalog.canonical(name, bare) else text
 
 
 def _or(items: list[str]) -> str:
@@ -245,6 +265,7 @@ def _labs(name: str, value: Any, catalog: Catalog, value_exists, query: Query) -
             raise _Ask(f"Which {key.replace('_', ' ')}?")
         found: list[str] = []
         for r in raw:
+            r = _without_count(r, col, catalog)
             if key == "test_name":
                 names = catalog.expand_test_names(r)
                 if not names:
@@ -254,7 +275,7 @@ def _labs(name: str, value: Any, catalog: Catalog, value_exists, query: Query) -
                     else:
                         near = catalog.suggest(col, r)
                         raise _Ask(f"I do not see a lab test called “{r}”." + (f" Did you mean {_or(near)}?" if near else ""), near)
-                if len(names) > 1 and catalog.canonical(col, r) is None:
+                if len(names) > 1:
                     query.warnings.append(f"“{r}” matches {_or(names)}; I searched all of them.")
                 found += names
             else:

@@ -15,3 +15,4 @@
 {% for l in answer.links %}<a class="btn" href="{{ l.url }}">{{ l.label }}</a>{% endfor %}
 {% if answer.has_more %}<form method="post" action="/copilot" data-more style="display:inline"><input type="hidden" name="plan" value="{{ plan_json }}"><input type="hidden" name="question" value="{{ question }}"><input type="hidden" name="previous" value="{{ previous|default('') }}"><input type="hidden" name="page" value="{{ answer.page + 1 }}"><button class="btn" type="submit">Show more</button></form>{% endif %}
 </div>{% endif %}
+{% if answer.trace %}<details style="margin-top:12px"><summary class="sub" style="cursor:pointer">How this answer was obtained</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;background:#F4F6F9;border-radius:8px;padding:12px;margin:8px 0 0">{{ answer.explain() }}</pre></details>{% endif %}

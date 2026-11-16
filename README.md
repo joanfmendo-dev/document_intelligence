@@ -227,8 +227,11 @@ b = cp.ask("only women", previous=a.plan)            # seguimiento: se pasa el p
 ```
 El **catálogo** (`catalog.yaml`: campos, roles, valores con conteos) lo genera `Catalog.build(con)` y lo mantiene la app web al guardar/editar/borrar; el copilot nunca lo escribe
 (si no existe, lo calcula en memoria). La web lo guarda junto a la base (`<base>.catalog.yaml`, o `catalog_path=`). Página: `/copilot`, un **chat**: el navegador guarda la conversación y envía los últimos 4 turnos (pregunta, plan, respuesta mostrada) al planner, así una aclaración se puede contestar (`cp.ask(q, history=[{"question", "plan", "reply"}, ...])`). Sin JavaScript queda una pregunta por página, con el plan anterior. Hay enlaces a cada registro y "Show more".
+**Controles del plan:** si la pregunta nombra un valor del catálogo (una prueba de laboratorio, un departamento…) que el plan no usa, el agente vuelve a preguntar al modelo una vez, mostrándole su propia respuesta y la observación; si aun así falta, la respuesta lo advierte. El validador avisa de lo que ignora (un `field` en un conteo, claves de otra intención) y de un conteo sin ninguna condición ("covers all the records"). Todo queda en `a.trace` (paso `check`).
 Un `group_by` imposible (p. ej. por prueba de laboratorio) no genera una pregunta: se da la cifra total y se avisa.
-Umbral semántico `SEMANTIC_MIN_SIMILARITY=0.6`: **sin calibrar**.
+**Trazabilidad:** `a.trace` es la lista ordenada de pasos (llamadas al LLM con lo enviado y la respuesta cruda, plan, validación con avisos, cada sentencia SQL con sus parámetros y filas devueltas, embedding de la consulta); `print(a.explain())` la muestra legible, y la página `/copilot` la muestra en "How this answer was obtained".
+Búsqueda semántica: umbral `SEMANTIC_MIN_SIMILARITY=0.6` (sin calibrar) más un corte relativo `SEMANTIC_RELATIVE_MARGIN=0.05` (`DOCINTEL_SEMANTIC_RELATIVE_MARGIN`): solo se muestran los resultados a menos de 0.05 del mejor, porque los puntajes de nomic-embed-text están comprimidos (0.5–0.75) y el umbral solo no separa. La traza muestra cuántos pasaron cada filtro (paso `semantic_filter`).
+**Correcciones tras las primeras corridas con modelos reales:** el prompt da la fecha de hoy y exige el token para "this year"/"last month" (un año literal en el ejemplo se copiaba); se aceptan `{"last_n_days": 30}` y valores copiados con su conteo (`"Cardiology (54)"`); un nombre de prueba exacto incluye sus variantes (`Glucose` → `Glucose (point-of-care)`, con aviso); un id parcial (`0007`) abre el registro `SYNUS-2026-0007`, y si encaja con varios pregunta cuál.
 
 ## 9. Evaluación
 ```python
@@ -241,6 +244,18 @@ print(report.format()); report.save("report.json")
 Nivel 1: exactitud de ejecución (compara el resultado real con el esperado: total y ids para listas, filas para agregados; intervalo de Wilson).
 Nivel 2: juez LLM comercial (`DOCINTEL_JUDGE_MODEL`, `DOCINTEL_JUDGE_API_KEY`; solo sobre datos sintéticos) con dos prompts: fidelidad de la respuesta frente al resultado ejecutado, e interpretación frente a la pregunta;
 `calibrate` prueba al juez con respuestas corrompidas a propósito. El conjunto corresponde a la base de 1.000 registros del proyecto; los casos ICD-10 (I01–I03) requieren una base con las columnas `icd10_*` llenas y los semánticos (M01–M03) etiquetas humanas.
+
+## 10. Comprobaciones en tu máquina (modelos reales)
+```bash
+ollama pull gemma3:4b && ollama pull nomic-embed-text      # los modelos que uses
+export DOCINTEL_JUDGE_API_KEY=...                          # opcional: el juez comercial (o OPENAI_API_KEY / ANTHROPIC_API_KEY)
+python -m docintel.evaluation.local_checks --db medical_records.duckdb
+```
+Corre en orden: 1) modelos (embeddings, texto, ¿obedece el esquema JSON?, juez), 2) embeddings (todos los registros, una corrida interrumpida que se reanuda,
+una segunda corrida que no hace nada, los ganchos de guardar/borrar), 3) puntajes semánticos de varias preguntas de prueba (para elegir `SEMANTIC_MIN_SIMILARITY`),
+4) el conjunto dorado con el modelo real (exactitud de ejecución, tiempos, reintentos) y 5) el juez y su calibración con respuestas corrompidas.
+Trabaja sobre una **copia** (`local_checks/work.duckdb`) y en ella borra una muestra de vectores (o todos con `--rebuild-embeddings`) para que la prueba de corrida interrumpida y la corrida completa trabajen de verdad; `--in-place` crea los vectores en tu archivo (no se combina con `--rebuild-embeddings`). Las pruebas de modelo usan 400 tokens para no marcar como fallo a modelos que razonan antes de responder. Deja `local_checks/report.md` y `local_checks/eval_report.json`.
+Código de color: títulos en azul, PASS en verde, FAIL en rojo, WARN y SKIP en amarillo (consola con colores ANSI; `--color always|never|auto`; en `report.md` se usan círculos 🟢🔴🟡🔵). Opciones: `--steps models embeddings ...`, `--no-judge`, `--min-accuracy 0.8`. Termina con código 1 si algún paso falla.
 
 ## Instalación
 ```powershell

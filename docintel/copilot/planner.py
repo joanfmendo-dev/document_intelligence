@@ -6,6 +6,8 @@ whatever it returns goes through validator.py before it can touch the database.
 from __future__ import annotations
 
 import json
+import time
+from datetime import date
 from typing import Any
 
 from ..shared.llm import LLM, LLMError
@@ -27,7 +29,8 @@ INTENTS (field "intent")
 
 FILTERS: a list of {"field", "op", "value"}; ALL of them must hold. Use only the fields and operators listed in the catalog. For "A or B" inside one field use op "in" with a list.
 - Categorical values: copy the spelling of the catalog values exactly. If the user names a value that is not in the catalog, use clarify.
-- Dates: never calculate dates. Use op "between" with one of {"year": 2025}, {"month": "2025-03"}, {"day": "2025-03-04"}, {"token": "this_year"} (also last_year, this_month, last_month, today, yesterday), {"token": "last_n_days", "n": 30}, {"from": "2025-01-01", "to": "2025-03-31"}.
+- Dates: never calculate dates. Today is {TODAY}. Use op "between" with one of: {"token": "this_year"} (also last_year, this_month, last_month, today, yesterday), {"token": "last_n_days", "n": 30}, or, only when the user names the year, month or day, {"year": <year>}, {"month": "YYYY-MM"}, {"day": "YYYY-MM-DD"}, {"from": "YYYY-MM-DD", "to": "YYYY-MM-DD"}. "This year", "last year", "this month", "last month", "today", "yesterday" ALWAYS use the token, never a literal year or date.
+- Values: copy only the value, never the number in parentheses that follows it in the catalog (that is a record count).
 - Numbers: write plain numbers. Temperature is stored in Fahrenheit; if the user gives Celsius write {"value": 39, "unit": "C"}.
 - Lab results: field "lab_results", op "has", value {"test_name": [...], "flag": [...]}. Include EVERY catalog test name that matches what the user said (some tests have variants).
 - Text fields (diagnosis, complaint, patient name): op "contains" with a short word or phrase. Prefer this to text_query when you know the word.
@@ -61,15 +64,19 @@ class PlannerError(LLMError):
 
 
 class Planner:
-    def __init__(self, catalog: Catalog, llm: Any = None, *, max_attempts: int = 2):
+    today: date | None = None  # the date given to the model; None = the real date
+
+    def __init__(self, catalog: Catalog, llm: Any = None, *, max_attempts: int = 2, today: date | None = None):
         """`llm` is anything with .run(messages, **params) -> str (default: the model in settings: COPILOT_LLM_MODEL or LLM_MODEL)."""
         self.catalog = catalog
+        self.today = today
         self.llm = llm if llm is not None else LLM(model=s.COPILOT_LLM_MODEL or None)
         self.max_attempts = max_attempts
+        self.last_attempts: list[dict] = []  # the model's raw replies of the last plan() call, for the answer's trace
 
     def messages(self, question: str, previous: dict | None = None, history: list[dict] | None = None) -> list[dict]:
         """`history`: the earlier turns of the chat, oldest first, each {"question", "plan", "reply"} (the reply is what the user was shown)."""
-        system = INSTRUCTIONS + "\nCATALOG (fields, [role; operators], and for categorical fields the values with their record counts)\n" \
+        system = INSTRUCTIONS.replace("{TODAY}", (self.today or date.today()).isoformat()) + "\nCATALOG (fields, [role; operators], and for categorical fields the values with their record counts)\n" \
             + self.catalog.prompt_text(question)
         user = f"Question: {question}"
         turns = [h for h in (history or []) if isinstance(h, dict) and isinstance(h.get("plan"), dict)][-MAX_TURNS:]
@@ -84,18 +91,32 @@ class Planner:
             user = f"Previous plan: {json.dumps(previous, ensure_ascii=False)}\nFollow-up question: {question}"
         return [{"role": "system", "content": system}, *chat, {"role": "user", "content": user}]
 
-    def plan(self, question: str, previous: dict | None = None, history: list[dict] | None = None) -> dict:
+    def plan(self, question: str, previous: dict | None = None, history: list[dict] | None = None,
+             correction: tuple[dict, str] | None = None) -> dict:
         """The model's plan for `question`. One retry, telling the model what was wrong with an unusable answer.
         Raises PlannerError if it still fails, LLMError if the model cannot be reached."""
         messages = self.messages(question, previous, history)
+        if correction:  # (the plan the model gave, what is wrong with it): ask again with its own answer and the remark in view
+            messages = messages + [{"role": "assistant", "content": json.dumps(correction[0], ensure_ascii=False)},
+                                   {"role": "user", "content": correction[1]}]
         response_format = {"type": "json_schema", "json_schema": {"name": "plan", "schema": plan_schema(self.catalog), "strict": True}}
         last = ""
+        if not correction:
+            self.last_attempts = []  # a correction adds to the attempts of the same question
         for _ in range(self.max_attempts):
-            reply = self.llm.run(messages, temperature=0, max_tokens=700, response_format=response_format)
+            attempt = {"messages": messages}
+            self.last_attempts.append(attempt)
+            started = time.perf_counter()
+            try:
+                reply = self.llm.run(messages, temperature=0, max_tokens=700, response_format=response_format)
+            except Exception as exc:
+                attempt.update(error=f"{type(exc).__name__}: {exc}", seconds=round(time.perf_counter() - started, 2))
+                raise
+            attempt.update(reply=reply, seconds=round(time.perf_counter() - started, 2))
             try:
                 return parse_plan(reply)
             except PlanFormatError as exc:
-                last = str(exc)
+                last = attempt["error"] = str(exc)
                 messages = messages + [{"role": "assistant", "content": reply},
                                        {"role": "user", "content": f"That was not usable: {exc}. Reply with only the JSON plan."}]
         raise PlannerError(f"the model did not return a usable plan ({last})")
