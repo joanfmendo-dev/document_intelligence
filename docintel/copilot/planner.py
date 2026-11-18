@@ -31,7 +31,7 @@ FILTERS: a list of {"field", "op", "value"}; ALL of them must hold. Use only the
 - Categorical values: copy the spelling of the catalog values exactly. If the user names a value that is not in the catalog, use clarify.
 - Dates: never calculate dates. Today is {TODAY}. Use op "between" with one of: {"token": "this_year"} (also last_year, this_month, last_month, today, yesterday), {"token": "last_n_days", "n": 30}, or, only when the user names the year, month or day, {"year": <year>}, {"month": "YYYY-MM"}, {"day": "YYYY-MM-DD"}, {"from": "YYYY-MM-DD", "to": "YYYY-MM-DD"}. "This year", "last year", "this month", "last month", "today", "yesterday" ALWAYS use the token, never a literal year or date.
 - Values: copy only the value, never the number in parentheses that follows it in the catalog (that is a record count).
-- Numbers: write plain numbers. Temperature is stored in Fahrenheit; if the user gives Celsius write {"value": 39, "unit": "C"}.
+- Numbers: write plain numbers; op "between" takes a list of two numbers, [0, 35] ("between 0 and 35", "up to 35" with a lower limit). Never use {"from", "to"} for numbers: that is only for dates. Temperature is stored in Fahrenheit; if the user gives Celsius write {"value": 39, "unit": "C"}.
 - Lab results: field "lab_results", op "has", value {"test_name": [...], "flag": [...]}. Include EVERY catalog test name that matches what the user said (some tests have variants).
 - Text fields (diagnosis, complaint, patient name): op "contains" with a short word or phrase. Prefer this to text_query when you know the word.
 - text_query is only for describing a case by meaning ("dizzy when standing up"). Combine it with filters when the question also names a department, a date, etc.

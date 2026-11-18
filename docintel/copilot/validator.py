@@ -242,6 +242,11 @@ def _numeric(name: str, op: str, value: Any, catalog: Catalog) -> Filter:
 
     label_name = name.replace("vital_signs.", "").replace("_", " ")
     if op == "between":
+        if isinstance(value, dict):  # {"from": 0, "to": 35} / {"min": .., "max": ..}: the date spelling, which models carry over to numbers
+            for lo_key, hi_key in (("from", "to"), ("min", "max"), ("low", "high")):
+                if lo_key in value and hi_key in value:
+                    value = [value[lo_key], value[hi_key]]
+                    break
         if not isinstance(value, list) or len(value) != 2:
             raise _Ask(f"For a range of {label_name} give two numbers, for example 60 and 70.")
         a, b = number(value[0]), number(value[1])

@@ -947,3 +947,10 @@ def test_semantic_hits_far_below_the_best_one_are_cut(db, monkeypatch):
     best = max(narrow.result.scores.values())
     assert all(sc >= best - 0.01 for sc in narrow.result.scores.values())
     assert any(st.get("step") == "semantic_filter" and st["kept"] == narrow.result.total for st in narrow.trace)
+
+
+def test_a_numeric_range_written_like_a_date_range_is_read(catalog):
+    for value in ({"from": 0, "to": 35}, {"min": 0, "max": 35}, [0, 35]):
+        q = v({"intent": "aggregate", "filters": [f("age", "between", value)], "aggregate": {"metric": "count", "group_by": "sex"}}, catalog)
+        assert q.intent == "aggregate" and q.filters[0].value == [0, 35], value
+    assert v({"intent": "search", "filters": [f("age", "between", {"from": 40, "to": 30})]}, catalog).intent == "clarify"

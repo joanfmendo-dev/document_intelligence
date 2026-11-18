@@ -39,6 +39,7 @@ from .judge import Judge, calibrate, judge_view
 from .runner import evaluate
 
 TOKENS = 400  # room for a model that thinks before it answers (50 left some of them with an empty reply)
+SAMPLE_PENDING = 200  # vectors deleted in the copy: well over the 2 batches the interrupted run lets through
 STEPS = ("models", "embeddings", "semantic", "planner", "judge")
 PROBES = ("trouble breathing at night", "chest pain when walking", "stomach ache after eating", "high blood sugar",
           "headache with nausea", "ankle injury after a fall")
@@ -240,7 +241,7 @@ def check_embeddings(report: Report, db_path: Path, embedder: Any) -> None:
                              f"{total} records" + ("" if total == 1000 else " (the golden set was written for the 1,000-record database)")))
             # a model that goes down midway: what was done is kept, and a second call continues
             if total >= 4 and before["pending"] >= 4:
-                size = max(1, min(embedder.batch_size, total // 4))
+                size = max(1, min(embedder.batch_size, before["pending"] // 4))  # the failure comes after 2 batches: fewer than are pending
                 real, db._embedder = db.embedder, _FailAfter(embedder, 2, size)
                 try:
                     db.embed_pending()
@@ -435,7 +436,7 @@ def run(argv: list[str] | None = None, *, llm: Any = None, embedder: Any = None,
         if wal.exists():
             shutil.copy2(wal, Path(str(work) + ".wal"))
         if "embeddings" in set(args.steps):
-            _free_vectors(work, None if args.rebuild_embeddings else max(4 * getattr(embedder, "batch_size", 16), 64) if embedder else 64)
+            _free_vectors(work, None if args.rebuild_embeddings else SAMPLE_PENDING)
     embedder = embedder or Embedder()
     llm = llm or LLM(model=s.COPILOT_LLM_MODEL or s.LLM_MODEL)
     use_judge = not args.no_judge and (judge_llm is not None or judge_configured())
