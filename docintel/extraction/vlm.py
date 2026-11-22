@@ -14,7 +14,6 @@ from pathlib import Path
 from ._entries import text_result
 from ._images import iter_page_images
 from ..shared.llm import LLM, image_content
-from ..shared.settings import s
 
 DEFAULT_PROMPT = (
     "Transcribe this document page to Markdown.\n"
@@ -49,7 +48,7 @@ def extract_vlm(
     so every page's "text_with_coordinates" is an empty list.
 
     `llm_params` go to the model call (e.g. think=False, num_ctx=16384 for Ollama)."""
-    llm = LLM(model=model or s.VLM_MODEL, api_key=s.VLM_API_KEY, base_url=s.VLM_BASE_URL, timeout=timeout)
+    llm = LLM(model=model, timeout=timeout, role="vlm")
     params = {"temperature": 0, "max_tokens": max_tokens, **llm_params}  # the caller may override any of them
     texts = []
     for number, image in enumerate(iter_page_images(path, dpi), start=1):

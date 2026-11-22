@@ -28,9 +28,8 @@ class Settings:
     # the record fields that make up the text to embed (in this order); decided with the recall test, so configurable
     EMBEDDING_FIELDS = ("chief_complaint", "history_of_present_illness", "final_diagnosis")
 
-    # copilot (docintel.copilot): model that writes the plan, the catalog file, and how far semantic search reaches
+    # copilot (docintel.copilot): model that writes the plan, and how far semantic search reaches
     COPILOT_LLM_MODEL = os.getenv("DOCINTEL_COPILOT_LLM_MODEL", "")  # "" = LLM_MODEL
-    CATALOG_PATH = os.getenv("DOCINTEL_CATALOG_PATH", "catalog.yaml")
     CATALOG_MAX_VALUES = 100              # a column with more distinct values than this does not list them
     COPILOT_PAGE_SIZE = 25                # rows shown per answer
     SEMANTIC_TOP_K = 50                   # most candidates a semantic search returns
@@ -54,46 +53,14 @@ class Settings:
     UPLOADS_DIR = os.getenv("DOCINTEL_UPLOADS_DIR", "uploads")
     MAX_UPLOAD_MB = int(os.getenv("DOCINTEL_MAX_UPLOAD_MB", "25"))
 
-    #JSON Templates
-    DB_JSON_TEMPLATE = {
-        "record_id": "SYNUS-2026-0001",
-        "department": "Cardiology",
-        "patient_name": "Jennifer Parker",
-        "dob": "1961-01-28T00:00:00",
-        "age": 63,
-        "sex": "Female",
-        "insurance": "Aetna PPO",
-        "city": "Miami, Florida",
-        "encounter_date": "2025-01-01T09:00:00",
-        "chief_complaint": "Chest pressure and exertional dyspnea.",
-        "history_of_present_illness": "The patient reports 5 days of substernal pressure that worsens with exertion and improves with rest. Mild diaphoresis and nausea are present, but there is no syncope.",
-        "past_medical_history": "Hypertension, hyperlipidemia, former smoker.",
-        "medications": "Atorvastatin, lisinopril, aspirin.",
-        "allergies": "NKDA.",
-        "vital_signs": {
-            "blood_pressure": "158/95 mmHg",
-            "heart_rate": "101 bpm",
-            "respiration_rate": "23/min",
-            "temperature": "99.4 °F",
-            "sp02": "98%"
-        },
-        "physical_exam": "Mild distress, regular tachycardia, and no focal neurologic deficits.",
-        "lab_results": [
-            {"test_name": "Troponin I (initial)", "result": "0.042 ng/mL", "flag": "Borderline"},
-            {"test_name": "WBC Count", "result": "5.6 K/uL", "flag": "Normal"},
-            {"test_name": "Hemoglobin", "result": "14.3 g/dL", "flag": "Normal"},
-            {"test_name": "Platelets", "result": "181 K/uL", "flag": "Normal"},
-            {"test_name": "Sodium", "result": "138 mmol/L", "flag": "Normal"},
-            {"test_name": "Potassium", "result": "4.3 mmol/L", "flag": "Normal"},
-            {"test_name": "BUN", "result": "12 mg/dL", "flag": "Normal"},
-            {"test_name": "Creatinine", "result": "0.87 mg/dL", "flag": "Normal"},
-            {"test_name": "Glucose", "result": "97 mg/dL", "flag": "Normal"}
-        ],
-        "imaging_results": "ECG with nonspecific ST-T changes; chest X-ray without acute infiltrate.",
-        "final_diagnosis": "Possible acute coronary syndrome / NSTEMI versus demand ischemia.",
-        "plan": "Telemetry admission, serial troponins, cardiology consultation, aspirin, and risk stratification.",
-        "progress_notes": "Ongoing chest pain surveillance with biomarker trending."
-    }
-    DB_JSON_TEMPLATE = os.getenv("DB_JSON_TEMPLATE", DB_JSON_TEMPLATE)
+    def role(self, name: str) -> dict[str, str]:
+        """{"model", "api_key", "base_url"} of a role: "text", "vlm", "embedding", "judge", or "copilot" (the text model unless
+        COPILOT_LLM_MODEL names another one; the same key and URL as the text model)."""
+        prefix = {"text": "LLM", "copilot": "LLM", "vlm": "VLM", "embedding": "EMBEDDING", "judge": "JUDGE"}[name]
+        model = getattr(self, f"{prefix}_MODEL")
+        if name == "copilot":
+            model = self.COPILOT_LLM_MODEL or model
+        return {"model": model, "api_key": getattr(self, f"{prefix}_API_KEY"), "base_url": getattr(self, f"{prefix}_BASE_URL")}
+
 
 s = Settings()

@@ -5,36 +5,28 @@ import pytest
 from datetime import datetime
 
 from docintel import RecordDB
+import fakes
 from docintel.database.data_transformation import ICD10
 from docintel.shared.llm import LLMError
 from openpyxl import Workbook, load_workbook
 
 
-class FakeLLM:
-    """Answers with the next canned reply and records what it was asked."""
-    model = "fake"
+NO_CODE = '{"code": "R69"}'
 
-    def __init__(self, *replies):
-        self.replies, self.calls = list(replies), []
 
-    def run(self, messages, **params):
-        self.calls.append(messages)
-        reply = self.replies.pop(0) if self.replies else self.replies_default
-        if isinstance(reply, Exception):
-            raise reply
-        return reply if isinstance(reply, str) else json.dumps(reply)
-
-    replies_default = '{"code": "R69"}'
+def FakeLLM(*replies):
+    """The shared fake model; with no canned reply left it answers R69."""
+    return fakes.FakeLLM(*replies, default=NO_CODE)
 
 
 def answers_by_diagnosis(table):
     """A fake model that codes by the diagnosis in the prompt."""
-    class ByDiagnosis(FakeLLM):
+    class ByDiagnosis(fakes.FakeLLM):
         def run(self, messages, **params):
-            self.calls.append(messages)
+            self.calls.append((messages, params))
             text = messages[0]["content"]
             return json.dumps({"code": next((code for dx, code in table.items() if dx in text), "R69")})
-    return ByDiagnosis()
+    return ByDiagnosis(default=NO_CODE)
 
 
 # ---------------------------------------------------------------- the ontology
@@ -63,7 +55,7 @@ def test_classify_asks_with_diagnosis_and_complaint_and_resolves_the_answer():
     llm = FakeLLM({"code": "J18"})
     coding = ICD10(llm).classify("Community-acquired pneumonia", "Cough and fever")
     assert coding == ("J18", "Diseases of the respiratory system", "Pneumonia, organism unspecified")
-    assert llm.calls[0][0]["content"] == "final_diagnosis: Community-acquired pneumonia\nchief_complaint: Cough and fever"
+    assert llm.calls[0][0][0]["content"] == "final_diagnosis: Community-acquired pneumonia\nchief_complaint: Cough and fever"
 
 
 def test_classify_accepts_a_subcategory_and_plain_text_answers():
@@ -74,7 +66,7 @@ def test_classify_accepts_a_subcategory_and_plain_text_answers():
 def test_an_invalid_code_is_corrected_once_then_given_up():
     llm = FakeLLM({"code": "A47.86"}, {"code": "I80"})
     assert ICD10(llm).classify("DVT", "").code == "I80"
-    assert "not a valid ICD-10 code" in llm.calls[1][-1]["content"] and len(llm.calls) == 2
+    assert "not a valid ICD-10 code" in llm.calls[1][0][-1]["content"] and len(llm.calls) == 2
     stubborn = FakeLLM({"code": "ZZZ"}, {"code": "K39.9"})
     assert ICD10(stubborn).classify("DVT", "") is None                 # blank, not a made-up placeholder
     assert len(stubborn.calls) == 2

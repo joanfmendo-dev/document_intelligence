@@ -11,7 +11,6 @@ from datetime import date
 from typing import Any
 
 from ..shared.llm import LLM, LLMError
-from ..shared.settings import s
 from .catalog import Catalog
 from .plan import PlanFormatError, parse_plan, plan_schema
 
@@ -70,7 +69,7 @@ class Planner:
         """`llm` is anything with .run(messages, **params) -> str (default: the model in settings: COPILOT_LLM_MODEL or LLM_MODEL)."""
         self.catalog = catalog
         self.today = today
-        self.llm = llm if llm is not None else LLM(model=s.COPILOT_LLM_MODEL or None)
+        self.llm = llm if llm is not None else LLM(role="copilot")
         self.max_attempts = max_attempts
         self.last_attempts: list[dict] = []  # the model's raw replies of the last plan() call, for the answer's trace
 

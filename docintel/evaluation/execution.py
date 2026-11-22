@@ -11,7 +11,6 @@ A list of records is compared by its total and by the set of record_ids; an aggr
 from __future__ import annotations
 
 import hashlib
-import itertools
 import math
 from dataclasses import dataclass
 from statistics import NormalDist

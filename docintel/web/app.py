@@ -5,99 +5,48 @@ database; browse, edit and delete saved records. The uploaded file is only kept 
     app = create_app()          # or: python -m docintel.web
 
 Pages are rendered on the server (Jinja2); the little JavaScript in static/app.js only adds drag & drop,
-the lab-rows buttons and Esc on the delete dialog.
+the lab-rows buttons and Esc on the delete dialog. The routes live in upload_routes, record_routes and copilot_routes;
+what they share (database, models, templates, what to do after a write) is in site.Site.
 """
 from __future__ import annotations
 
-import json
-import logging
-import mimetypes
 from contextlib import asynccontextmanager
-from math import ceil
-from pathlib import Path
 from typing import Callable
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import urlsplit
 
-from fastapi import Depends, FastAPI, File, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
-from starlette.datastructures import FormData
 from starlette.exceptions import HTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
-from starlette.templating import Jinja2Templates
 
-from ..database.data_transformation import ICD10
-from ..copilot import Copilot
-from ..copilot.catalog import Catalog
-from ..database import RecordDB, RecordExistsError, RecordNotFoundError
-from ..shared.embeddings import EmbeddingError
-from ..shared.llm import LLMError
-from ..shared.settings import s
-from . import forms, pipeline as default_pipeline
-from .jobs import Jobs
-from .storage import DOCUMENT_SUFFIXES, UploadStore, FileTooLarge, kind_of
+from .copilot_routes import copilot_routes
+from .record_routes import record_routes
+from .site import HERE, Site
+from .upload_routes import upload_routes
 
-HERE = Path(__file__).parent
-PAGE_SIZE = 25  # the default; the user can pick another from PAGE_SIZES
-PAGE_SIZES = (20, 25, 50, 100)
 LOCAL_HOSTS = ["localhost", "127.0.0.1", "[::1]"]
-STEP_LABELS = ["Reading the text (OCR on images)", "Extracting the fields", "Assigning the ICD-10 code", "Review and save"]
-log = logging.getLogger(__name__)
-COPILOT_EXAMPLES = ("Patients over 60 in Cardiology this year", "How many records per department?", "Who came in with trouble breathing at night?",
-                    "Average heart rate for patients with chest pain")
-FLASH = {"saved": "Record {id} saved.", "updated": "Changes to {id} saved.", "deleted": "Record {id} deleted."}
 
 
-def create_app(*, db_path: str | Path | None = None, uploads_dir: str | Path | None = None,
-               pipeline: Callable | None = None, allowed_hosts: list[str] | None = None,
-               max_upload_mb: int | None = None, catalog_path: str | Path | None = None,
-               copilot_llm=None, embedder=None) -> FastAPI:
+def create_app(*, db_path=None, uploads_dir=None, pipeline: Callable | None = None, allowed_hosts: list[str] | None = None,
+               max_upload_mb: int | None = None, catalog_path=None, copilot_llm=None, embedder=None) -> FastAPI:
     """Build the app. Every argument defaults to the matching setting (docintel.shared.settings); `pipeline` is
     (path, on_step) -> Extraction, and is swapped in tests so they need neither OCR nor a model.
     `copilot_llm` and `embedder` replace the language and embedding models (tests); `catalog_path` is the copilot's catalog file,
     which only this app writes (by default next to the database)."""
-    db_path = str(db_path or s.DB_PATH)
-    catalog_file = Path(catalog_path) if catalog_path else Path(db_path).with_suffix(".catalog.yaml")
-    max_mb = max_upload_mb or s.MAX_UPLOAD_MB
-    uploads = UploadStore(uploads_dir or s.UPLOADS_DIR)
-    jobs = Jobs(pipeline or default_pipeline.run)
-    upload_errors = {
-        "type": "Unsupported file type. Use a PDF, Word (.docx), an image or a text file.",
-        "empty": "Choose a file (it cannot be empty).",
-        "size": f"The file is larger than the {max_mb} MB limit.",
-    }
-
-    def open_db() -> RecordDB:
-        return RecordDB(db_path, embedder=embedder)
-
-    def after_write(db: RecordDB, record_id: str | None) -> None:
-        """Keep what the copilot reads up to date: the record's vector and the catalog of values. Neither may fail a save:
-        a record without a vector is picked up by `embed_pending`, and a stale catalog falls back to the live database."""
-        if record_id:
-            try:
-                db.embed_record(record_id)
-            except EmbeddingError as exc:
-                log.warning("record %s saved without embedding: %s", record_id, exc)
-        try:
-            previous = Catalog.from_yaml(catalog_file) if catalog_file.is_file() else None
-            catalog = previous.refresh(db.con) if previous else Catalog.build(db.con)
-            catalog.to_yaml(catalog_file)
-        except Exception as exc:  # never lose a save over the catalog
-            log.warning("could not update the catalog: %s", exc)
+    site = Site(db_path=db_path, uploads_dir=uploads_dir, pipeline=pipeline, max_upload_mb=max_upload_mb,
+                catalog_path=catalog_path, copilot_llm=copilot_llm, embedder=embedder)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        uploads.prepare()
-        open_db().close()  # creates the table; fails now, and clearly, if another process has the file open
+        site.uploads.prepare()
+        site.open_db().close()  # creates the table; fails now, and clearly, if another process has the file open
         yield
-        jobs.shutdown()
+        site.jobs.shutdown()
 
     app = FastAPI(title="DocBase", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts or LOCAL_HOSTS)
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
-    templates = Jinja2Templates(directory=HERE / "templates")
-    templates.env.globals.update(PATIENT=forms.PATIENT, ICD=forms.ICD, HISTORY=forms.HISTORY, EXAM=forms.EXAM, FINAL=forms.FINAL, VITALS=forms.VITALS,
-                                 LAB_COLUMNS=forms.LAB_COLUMNS, LAB_TESTS=forms.LAB_TESTS, LAB_FLAGS=forms.LAB_FLAGS, SEX_CHOICES=forms.SEX_CHOICES, label_of=forms.label_of)
 
     @app.middleware("http")
     async def protect(request: Request, call_next):
@@ -109,259 +58,10 @@ def create_app(*, db_path: str | Path | None = None, uploads_dir: str | Path | N
         response.headers["Cache-Control"] = "no-store"  # these are medical records: keep them out of the browser cache
         return response
 
-    # ------------------------------------------------------------ helpers
-    def render(request: Request, name: str, status: int = 200, **context):
-        context.setdefault("flash", FLASH.get(request.query_params.get("ok", ""), "").format(id=request.query_params.get("id", "")))
-        return templates.TemplateResponse(request, name, context, status_code=status)
-
-    def go(url: str) -> RedirectResponse:
-        return RedirectResponse(url, status_code=303)
-
-    async def read_form(request: Request) -> FormData:
-        return await request.form()
-
-    def file_response(path: Path) -> FileResponse:
-        kind = kind_of(path)
-        media = "text/plain; charset=utf-8" if kind == "text" else mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-        return FileResponse(path, media_type=media, filename=path.name, headers={"X-Content-Type-Options": "nosniff"},
-                            content_disposition_type="attachment" if kind == "other" else "inline")
-
-    def found(value, what: str):
-        """`value`, or a 404 page saying that `what` does not exist."""
-        if value is None:
-            raise HTTPException(404, f"The {what} you are looking for does not exist.")
-        return value
-
     @app.exception_handler(HTTPException)
     async def http_error(request: Request, exc: HTTPException):
-        return render(request, "error.html", exc.status_code, active="", title=f"Error {exc.status_code}", message=exc.detail)
+        return site.render(request, "error.html", exc.status_code, active="", title=f"Error {exc.status_code}", message=exc.detail)
 
-    # ------------------------------------------------------------ upload a document
-    def steps_of(job) -> list[tuple[str, str]]:
-        order = ["reading", "extracting", "coding", "done"]
-        failed = job.step == "error"
-        current = order.index(job.failed_in if failed else job.step)
-        state = lambda i: "done" if i < current else ("failed" if failed else "in progress") if i == current else "pending"
-        return [(label, state(i)) for i, label in enumerate(STEP_LABELS)]
-
-    def upload_context(job=None, **extra) -> dict:
-        defaults = dict(active="upload", job=job, steps=steps_of(job) if job else [], max_mb=max_mb, error="", viewer=None,
-                        accept=",".join(sorted(DOCUMENT_SUFFIXES)))
-        return {**defaults, **extra}
-
-    def review_context(job, values=None, errors=None, **extra) -> dict:
-        """The review form of a finished job. A value still equal to what the model extracted and that was not
-        found in the text stays flagged; once the user changes it, it counts as reviewed."""
-        original = forms.to_values(job.extraction.fields)
-        values = values or original
-        now, then = forms.flat(values), forms.flat(original)
-        flagged = [p for p in job.extraction.ungrounded if now.get(p) == then.get(p)]
-        review = dict(values=values, errors=errors or {}, flags=set(flagged), flagged_labels=[forms.label_of(p) for p in flagged],
-                      viewer={"url": f"/upload/{job.id}/document", "kind": kind_of(job.path), "name": job.filename},
-                      pages=job.extraction.pages, notice=job.extraction.notice, mode="upload", replace=False, conflict=False)
-        return upload_context(job, **{**review, **extra})
-
-    @app.get("/")
-    def home():
-        return go("/upload")
-
-    @app.get("/upload")
-    def upload_page(request: Request, error: str = ""):
-        return render(request, "upload.html", **upload_context(error=upload_errors.get(error, "")))
-
-    @app.post("/upload")
-    def upload(file: UploadFile | None = File(None)):
-        if file is None or not file.filename:
-            return go("/upload?error=empty")
-        if Path(file.filename.replace("\\", "/")).suffix.lower() not in DOCUMENT_SUFFIXES:
-            return go("/upload?error=type")
-        job_id = jobs.new_id()
-        try:
-            path = uploads.save(job_id, file.filename, file.file, max_mb * 1024 * 1024)
-        except FileTooLarge:
-            return go("/upload?error=size")
-        except ValueError:
-            return go("/upload?error=empty")
-        jobs.start(job_id, Path(file.filename.replace("\\", "/")).name, path)
-        return go(f"/upload/{job_id}")
-
-    @app.get("/upload/{job_id}")
-    def job_page(request: Request, job_id: str):
-        job = found(jobs.get(job_id), "upload")
-        context = review_context(job) if job.step == "done" else upload_context(job)
-        return render(request, "upload.html", **context)
-
-    @app.get("/upload/{job_id}/document")
-    def job_document(job_id: str):
-        return file_response(found(jobs.get(job_id), "document").path)
-
-    @app.post("/upload/{job_id}/retry")
-    def job_retry(job_id: str):
-        jobs.retry(job_id)
-        return go(f"/upload/{job_id}")
-
-    @app.post("/upload/{job_id}/cancel")
-    def job_cancel(job_id: str):
-        if job := jobs.remove(job_id):
-            uploads.discard(job.path)
-        return go("/upload")
-
-    @app.post("/upload/{job_id}/save")
-    def job_save(request: Request, job_id: str, form: FormData = Depends(read_form)):
-        job = found(jobs.get(job_id), "upload")
-        if job.step != "done":
-            return go(f"/upload/{job_id}")
-        values = forms.from_form(form)
-        fields, errors = forms.parse(values)
-        replace, conflict = form.get("replace") == "on", False
-        if not errors:
-            try:
-                with open_db() as db:
-                    if replace and db.read_record(fields["record_id"]) is not None:
-                        db.update_record(fields, keep_existing=False)
-                    else:
-                        db.create_record(fields)
-                    after_write(db, fields["record_id"])
-            except RecordExistsError:
-                errors["record_id"] = "A record with this ID already exists. Change the ID or tick “Replace the existing record”."
-                conflict = True
-        if errors:
-            return render(request, "upload.html", 422, **review_context(job, values, errors, replace=replace, conflict=conflict))
-        uploads.discard(job.path)  # the data is in the database: the file is not needed any more
-        jobs.remove(job_id)
-        return go(f"/records?{urlencode({'ok': 'saved', 'id': fields['record_id']})}")
-
-    # ------------------------------------------------------------ the database
-    def list_context(q: str, department: str, page: int, per_page: int = PAGE_SIZE) -> dict:
-        per_page = per_page if per_page in PAGE_SIZES else PAGE_SIZE
-        page = max(page, 1)
-        with open_db() as db:
-            departments = db.departments()
-            rows, total = db.list_records(search=q, department=department, limit=per_page, offset=(page - 1) * per_page)
-            pages = max(ceil(total / per_page), 1)
-            if page > pages:  # a stale link to a page that no longer exists
-                page = pages
-                rows, total = db.list_records(search=q, department=department, limit=per_page, offset=(page - 1) * per_page)
-
-        def query(n: int) -> str:  # the filters, the page size and page n; defaults are left out to keep links short
-            params = {"q": q, "d": department, "n": per_page if per_page != PAGE_SIZE else "", "page": n if n > 1 else ""}
-            return urlencode({k: v for k, v in params.items() if v})
-
-        link = lambda n: "/records" + ("?" + query(n) if query(n) else "")
-        return dict(active="records", rows=rows, total=total, q=q, d=department, departments=departments, page=page, pages=pages,
-                    per_page=per_page, page_sizes=PAGE_SIZES, start=(page - 1) * per_page + 1 if rows else 0, end=(page - 1) * per_page + len(rows),
-                    first_url=link(1) if page > 1 else "", prev_url=link(page - 1) if page > 1 else "",
-                    next_url=link(page + 1) if page < pages else "", last_url=link(pages) if page < pages else "",
-                    here=link(page), keep=query(page), confirm=None)
-
-    @app.get("/records")
-    def records_page(request: Request, q: str = "", d: str = "", page: int = 1, n: int = PAGE_SIZE):
-        return render(request, "records.html", **list_context(q.strip(), d, page, n))
-
-    @app.get("/records/{record_id}/delete")
-    def delete_page(request: Request, record_id: str, q: str = "", d: str = "", page: int = 1, n: int = PAGE_SIZE):
-        with open_db() as db:
-            record = db.read_record(record_id)
-        found(record, "record")
-        context = list_context(q.strip(), d, page, n)
-        context["confirm"] = {"id": record_id, "patient": record["patient_name"]}
-        return render(request, "records.html", **context)
-
-    @app.post("/records/{record_id}/delete")
-    def delete(record_id: str, form: FormData = Depends(read_form)):
-        with open_db() as db:
-            deleted = db.delete_record(record_id)
-            if deleted:
-                after_write(db, None)
-        keep = {k: form.get(k) for k in ("q", "d", "n", "page") if form.get(k)}
-        return go("/records?" + urlencode({**keep, "ok": "deleted" if deleted else "", "id": record_id}))
-
-    @app.get("/icd10")
-    def icd10_lookup(code: str = ""):
-        """The chapter and category of a code, for the form to show while the user types it ({} if it is not a code)."""
-        coding = ICD10.resolve(code)
-        return JSONResponse(coding._asdict() if coding else {})
-
-    # ------------------------------------------------------------ edit a record
-    def edit_context(record_id: str, values: dict, errors: dict) -> dict:
-        return dict(active="records", mode="edit", record_id=record_id, values=values, errors=errors, flags=set(), viewer=None, replace=False, conflict=False)
-
-    @app.get("/records/{record_id}/edit")
-    def edit_page(request: Request, record_id: str):
-        with open_db() as db:
-            record = db.read_record(record_id)
-        found(record, "record")
-        return render(request, "edit.html", **edit_context(record_id, forms.to_values(record), {}))
-
-    @app.post("/records/{record_id}/edit")
-    def edit_save(request: Request, record_id: str, form: FormData = Depends(read_form)):
-        values = forms.from_form(form)
-        values["record_id"] = record_id  # the ID is the key: it cannot be changed here
-        fields, errors = forms.parse(values)
-        if errors:
-            return render(request, "edit.html", 422, **edit_context(record_id, values, errors))
-        try:
-            with open_db() as db:
-                db.update_record(fields, keep_existing=False)  # a field the user emptied is cleared
-                after_write(db, record_id)
-        except RecordNotFoundError:
-            found(None, "record")
-        return go(f"/records?{urlencode({'ok': 'updated', 'id': record_id})}")
-
-    # ------------------------------------------------------------ the copilot (a chat)
-    MAX_HISTORY = 8
-
-    def copilot_context(**extra) -> dict:
-        return {**dict(active="copilot", question="", answer=None, previous="", plan_json="", examples=COPILOT_EXAMPLES), **extra}
-
-    def json_field(form, name: str, kinds: tuple):
-        try:
-            value = json.loads(form.get(name) or "null")
-        except ValueError:
-            raise HTTPException(400, "That request could not be read.")
-        if not isinstance(value, kinds):
-            raise HTTPException(400, "That request could not be read.")
-        return value
-
-    def ask_copilot(form: FormData):
-        """The question, the answer, and the plan to show: from a new question (with the chat so far, or just the previous plan)
-        or from a plan and a page ('show more': no call to the model)."""
-        question = str(form.get("question") or "")[:500]
-        previous = json_field(form, "previous", (dict, type(None)))
-        plan = json_field(form, "plan", (dict, type(None)))
-        history = json_field(form, "history", (list, type(None))) or []
-        try:
-            page = max(1, int(form.get("page") or 1))
-        except ValueError:
-            raise HTTPException(400, "That request could not be read.")
-        history = [h for h in history if isinstance(h, dict)][-MAX_HISTORY:]
-        db = open_db()
-        try:
-            copilot = Copilot.from_db(db, catalog_path=catalog_file, llm=copilot_llm)
-            answer = copilot.answer_plan(plan, page) if plan else copilot.ask(question, previous, history=history)
-        finally:
-            db.close()
-        return question, previous, answer
-
-    @app.get("/copilot")
-    def copilot_page(request: Request):
-        return render(request, "copilot.html", **copilot_context())
-
-    @app.post("/copilot")
-    def copilot_ask(request: Request, form: FormData = Depends(read_form)):
-        """Without JavaScript: one question per page, refined with the previous plan. (With JavaScript the page is a chat: /copilot/ask.)"""
-        question, previous, answer = ask_copilot(form)
-        plan_json = json.dumps(answer.plan) if answer.plan else ""
-        keep = answer.kind in ("clarify", "error", "out_of_scope", "help", "navigate")  # these keep the earlier plan for the next message
-        carried = json.dumps(previous) if keep and previous else plan_json if answer.kind in ("results", "aggregate") else ""
-        return render(request, "copilot.html", **copilot_context(question=question, answer=answer, plan_json=plan_json, previous=carried))
-
-    @app.post("/copilot/ask")
-    def copilot_chat(request: Request, form: FormData = Depends(read_form)):
-        """One turn of the chat: the answer as an HTML fragment, with what the page needs to send back next time."""
-        question, _, answer = ask_copilot(form)
-        plan_json = json.dumps(answer.plan) if answer.plan else ""
-        html = templates.get_template("_answer.html").render(request=request, answer=answer, question=question, plan_json=plan_json)
-        return JSONResponse({"html": html, "kind": answer.kind, "plan": answer.plan, "reply": answer.summary})
-
+    for routes in (upload_routes, record_routes, copilot_routes):
+        app.include_router(routes(site))
     return app

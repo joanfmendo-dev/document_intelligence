@@ -166,7 +166,7 @@ def environment(report: Report) -> None:
         except metadata.PackageNotFoundError:
             versions.append(f"{pkg} (not installed)")
     report.add(Check("environment", "INFO", f"python {sys.version.split()[0]}; " + ", ".join(versions), [
-        f"text model       {s.COPILOT_LLM_MODEL or s.LLM_MODEL}", f"embedding model  {s.EMBEDDING_MODEL}",
+        f"text model       {s.role('copilot')['model']}", f"embedding model  {s.EMBEDDING_MODEL}",
         f"judge model      {s.JUDGE_MODEL}", f"semantic threshold {s.SEMANTIC_MIN_SIMILARITY}", f"ollama num_ctx   {s.OLLAMA_NUM_CTX}"]))
 
 
@@ -443,7 +443,7 @@ def run(argv: list[str] | None = None, *, llm: Any = None, embedder: Any = None,
         if "embeddings" in set(args.steps):
             _free_vectors(work, None if args.rebuild_embeddings else SAMPLE_PENDING)
     embedder = embedder or Embedder()
-    llm = llm or LLM(model=s.COPILOT_LLM_MODEL or s.LLM_MODEL)
+    llm = llm or LLM(role="copilot")
     use_judge = not args.no_judge and (judge_llm is not None or judge_configured())
     judge = Judge(llm=judge_llm) if use_judge else None
     judge_llm = judge.llm if judge else None

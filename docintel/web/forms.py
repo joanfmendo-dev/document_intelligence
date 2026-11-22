@@ -15,6 +15,7 @@ from typing import Any
 
 from ..database.data_transformation import ICD10
 from ..database import COLUMNS
+from ..shared.ids import RECORD_ID
 
 
 @dataclass(frozen=True)
@@ -68,7 +69,6 @@ LAB_TESTS = (
 )
 LAB_FLAGS = ("Normal", "High", "Low", "Borderline")
 
-RECORD_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")  # also a URL segment and a folder name: keep it plain
 DATE_HELP = "Use YYYY-MM-DD or YYYY-MM-DD HH:MM."
 
 

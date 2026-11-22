@@ -15,7 +15,6 @@ import re
 from typing import Any
 
 from ..shared.llm import LLM
-from ..shared.settings import s
 
 FIDELITY_SYSTEM = """You check whether a text shown to a user faithfully represents the result of a database query.
 
@@ -66,7 +65,7 @@ def judge_view(result_dict: dict | None, warnings: list[str] | None = None) -> s
 class Judge:
     def __init__(self, llm: Any = None, *, retries: int = 1):
         """`llm` is anything with .run(messages, **params) -> str; default: the commercial model in settings (JUDGE_MODEL)."""
-        self.llm = llm if llm is not None else LLM(model=s.JUDGE_MODEL, api_key=s.JUDGE_API_KEY, base_url=s.JUDGE_BASE_URL)
+        self.llm = llm if llm is not None else LLM(role="judge")
         self.retries = retries
 
     def _score(self, system: str, user: str) -> int | None:

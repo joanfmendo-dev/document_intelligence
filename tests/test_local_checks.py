@@ -6,7 +6,7 @@ import pytest
 
 from docintel import RecordDB
 from docintel.evaluation import local_checks
-from test_copilot import SEED, KeywordEmbedder, FakeLLM  # noqa: F401
+from fakes import SEED, FakeLLM, KeywordEmbedder  # noqa: F401
 
 
 class ClarifyLLM:

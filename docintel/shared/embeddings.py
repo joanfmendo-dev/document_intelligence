@@ -25,9 +25,10 @@ class EmbeddingError(LLMError):
 class Embedder:
     def __init__(self, model: str | None = None, api_key: str | None = None, base_url: str | None = None,
                  timeout: float = 120.0, batch_size: int = 32):
-        self.model = model or s.EMBEDDING_MODEL
-        self.api_key = s.EMBEDDING_API_KEY if api_key is None else api_key
-        self.base_url = s.EMBEDDING_BASE_URL if base_url is None else base_url
+        config = s.role("embedding")
+        self.model = model or config["model"]
+        self.api_key = config["api_key"] if api_key is None else api_key
+        self.base_url = config["base_url"] if base_url is None else base_url
         self.timeout = timeout
         self.batch_size = max(1, batch_size)
 

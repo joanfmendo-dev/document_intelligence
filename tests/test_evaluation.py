@@ -4,7 +4,7 @@ import re
 from datetime import date
 
 import pytest
-from test_copilot import SEED, FakeLLM, KeywordEmbedder, f  # the same small database as the copilot tests
+from fakes import SEED, TODAY, FakeLLM, KeywordEmbedder, f  # the same small database as the copilot tests
 
 from docintel.copilot import Copilot
 from docintel.copilot.plan import INTENTS
@@ -13,7 +13,6 @@ from docintel.evaluation import Golden, GoldenCase, Judge, calibrate, evaluate, 
 from docintel.evaluation.execution import compare_aggregate, compare_list, ids_digest, values_equal
 from docintel.evaluation.judge import add_claim, corrupt_number, judge_view
 
-TODAY = date(2026, 11, 13)
 
 
 # ================================================================ level 1

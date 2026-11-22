@@ -36,6 +36,7 @@ docintel-web = "docintel.web.__main__:main"
 [tool.setuptools.package-data]
 "docintel.web" = ["templates/*.html", "static/*"]
 "docintel.evaluation" = ["data/*.json"]
+"docintel.database" = ["record_template.json"]
 
 [tool.setuptools.packages.find]
 include = ["docintel*"]

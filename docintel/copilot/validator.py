@@ -13,16 +13,18 @@ The checks (design, section 6):
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 import re
 from datetime import date
 from typing import Any, Callable
 
+from ..shared.ids import RECORD_ID
 from . import dates
 from .catalog import GROUPABLE, LAB, LAB_FLAG, LAB_NAME, NUMERIC, OPS_BY_ROLE, VITALS, Catalog
 from .plan import (DESTINATIONS, HELP_TOPICS, INTENTS, MAX_FILTERS, MAX_IN_VALUES, MAX_TEXT, MAX_TOP_N, METRICS, REASONS,
                    Filter, Query, measurement_number)
 
-RECORD_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+MAX_QUESTION, MAX_SUGGESTIONS, MAX_TEXT_QUERY = 300, 5, 200   # characters of the question, suggestions kept, characters of a free-text query
 AGE_RANGE = (0, 120)
 OP_WORDS = {"gt": ">", "gte": "≥", "lt": "<", "lte": "≤", "eq": "="}
 
@@ -49,75 +51,87 @@ def validate(plan: Any, catalog: Catalog, *, today: date | None = None,
         return Query("clarify", message=ask.message, suggestions=ask.suggestions)
 
 
+@dataclass
+class _Ctx:
+    catalog: Catalog
+    today: date
+    value_exists: Callable | None
+
+
+ASK_METRIC = "What would you like to calculate: a count, an average, a minimum or a maximum?"
+
+
 def _validate(plan: Any, catalog: Catalog, today: date, value_exists) -> Query:
     if not isinstance(plan, dict):
         raise _Ask("I could not turn that into a search. Could you rephrase it?")
     intent = plan.get("intent")
     if intent not in INTENTS:
         raise _Ask("I could not tell what you want to do. Could you rephrase it?")
+    return _BY_INTENT[intent](plan, _Ctx(catalog, today, value_exists))
 
-    if intent == "clarify":
-        return Query("clarify", message=str(plan.get("question") or "Could you give me more detail?")[:300],
-                     suggestions=[str(x) for x in (plan.get("suggestions") or [])][:5])
-    if intent == "out_of_scope":
-        reason = plan.get("reason") if plan.get("reason") in REASONS else "unrelated"
-        return Query("out_of_scope", reason=reason)
-    if intent == "help":
-        return Query("help", topic=plan.get("topic") if plan.get("topic") in HELP_TOPICS else "capabilities")
 
-    query = Query(intent)
-    if intent == "get_record":
+def _clarify(plan: dict, ctx: _Ctx) -> Query:
+    return Query("clarify", message=str(plan.get("question") or "Could you give me more detail?")[:MAX_QUESTION],
+                 suggestions=[str(x) for x in (plan.get("suggestions") or [])][:MAX_SUGGESTIONS])
+
+
+def _out_of_scope(plan: dict, ctx: _Ctx) -> Query:
+    return Query("out_of_scope", reason=plan.get("reason") if plan.get("reason") in REASONS else "unrelated")
+
+
+def _help(plan: dict, ctx: _Ctx) -> Query:
+    return Query("help", topic=plan.get("topic") if plan.get("topic") in HELP_TOPICS else "capabilities")
+
+
+def _get_record(plan: dict, ctx: _Ctx) -> Query:
+    query = Query("get_record")
+    query.record_id = _record_id(plan.get("record_id"))
+    return query
+
+
+def _navigate(plan: dict, ctx: _Ctx) -> Query:
+    query = Query("navigate")
+    dest = plan.get("destination")
+    if dest not in DESTINATIONS:
+        raise _Ask("Where would you like to go: the records list, a record, or the upload page?")
+    query.destination = dest
+    if dest == "record":
         query.record_id = _record_id(plan.get("record_id"))
-        return query
-    if intent == "navigate":
-        dest = plan.get("destination")
-        if dest not in DESTINATIONS:
-            raise _Ask("Where would you like to go: the records list, a record, or the upload page?")
-        query.destination = dest
-        if dest == "record":
-            query.record_id = _record_id(plan.get("record_id"))
-        if dest == "records":
-            query.filters = _filters(plan.get("filters"), catalog, today, value_exists, query)
-        return query
+    if dest == "records":
+        query.filters = _filters(plan.get("filters"), ctx.catalog, ctx.today, ctx.value_exists, query)
+    return query
 
-    # search / aggregate
+
+def _condition(intent: str, plan: dict, ctx: _Ctx) -> Query:
+    """What a search and an aggregate share: the conditions (filters and text) of the plan."""
+    query = Query(intent)
     ignored = sorted(k for k, v in plan.items() if k not in _OWN_KEYS[intent] and v not in (None, "", [], {}))
     if ignored:  # parts that belong to another intent (a "topic" on a count): they change nothing, but the user should know
         query.warnings.append(f"I ignored parts of the plan that do not apply here: {', '.join(ignored)}.")
-    query.filters = _filters(plan.get("filters"), catalog, today, value_exists, query)
+    query.filters = _filters(plan.get("filters"), ctx.catalog, ctx.today, ctx.value_exists, query)
     text = plan.get("text_query")
     if text is not None and str(text).strip():
         query.text_query = str(text).strip()
-        if len(query.text_query) > 200:
+        if len(query.text_query) > MAX_TEXT_QUERY:
             raise _Ask("That description is too long. Could you shorten it?")
-    if intent == "search":
-        if not query.filters and not query.text_query:
-            raise _Ask("Which records do you want? For example a department, a diagnosis, a date range or a lab result.")
-        return query
+    return query
 
+
+def _search(plan: dict, ctx: _Ctx) -> Query:
+    query = _condition("search", plan, ctx)
+    if not query.filters and not query.text_query:
+        raise _Ask("Which records do you want? For example a department, a diagnosis, a date range or a lab result.")
+    return query
+
+
+def _aggregate(plan: dict, ctx: _Ctx) -> Query:
+    query = _condition("aggregate", plan, ctx)
     agg = plan.get("aggregate")
-    if not isinstance(agg, dict):
-        raise _Ask("What would you like to calculate: a count, an average, a minimum or a maximum?")
-    metric = agg.get("metric")
-    if metric not in METRICS:
-        raise _Ask("What would you like to calculate: a count, an average, a minimum or a maximum?")
-    query.metric = metric
-    if metric == "count" and agg.get("field") not in (None, ""):
-        query.warnings.append(f"A count does not use a field, so I ignored “{agg['field']}”.")
-    if metric != "count":
-        f = agg.get("field")
-        if f not in catalog or catalog.role(f) not in NUMERIC:
-            raise _Ask(f"I can calculate the {metric} of a numeric field (such as age or a vital sign). Which field do you mean?",
-                       [n for n in catalog.filter_fields() if catalog.role(n) in NUMERIC][:5])
-        query.agg_field = f
-    group = agg.get("group_by")
-    if group not in (None, ""):
-        if isinstance(group, str) and group in catalog and catalog.role(group) in GROUPABLE and group not in (LAB_NAME, LAB_FLAG):
-            query.group_by = group
-        else:  # the number the user asked for is still right without the grouping: give it, and say what was left out
-            shown = group if isinstance(group, str) else "that"
-            options = ", ".join(n for n in catalog.filter_fields() if catalog.role(n) in GROUPABLE)
-            query.warnings.append(f"I cannot group by “{shown}”, so this is the overall figure. I can group by: {options}.")
+    if not isinstance(agg, dict) or agg.get("metric") not in METRICS:
+        raise _Ask(ASK_METRIC)
+    query.metric = agg["metric"]
+    _aggregate_field(query, agg, ctx.catalog)
+    _group_by(query, agg.get("group_by"), ctx.catalog)
     if not query.filters and not query.text_query and not query.group_by:
         query.warnings.append("No condition was applied, so this covers all the records.")
     top = agg.get("top_n")
@@ -130,6 +144,37 @@ def _validate(plan: Any, catalog: Catalog, today: date, value_exists) -> Query:
             raise _Ask(f"I can show between 1 and {MAX_TOP_N} groups.")
         query.top_n = top
     return query
+
+
+def _fields_with_role(catalog: Catalog, roles) -> list[str]:
+    return [n for n in catalog.filter_fields() if catalog.role(n) in roles]
+
+
+def _aggregate_field(query: Query, agg: dict, catalog: Catalog) -> None:
+    field = agg.get("field")
+    if query.metric == "count":
+        if field not in (None, ""):
+            query.warnings.append(f"A count does not use a field, so I ignored “{field}”.")
+        return
+    if field not in catalog or catalog.role(field) not in NUMERIC:
+        raise _Ask(f"I can calculate the {query.metric} of a numeric field (such as age or a vital sign). Which field do you mean?",
+                   _fields_with_role(catalog, NUMERIC)[:5])
+    query.agg_field = field
+
+
+def _group_by(query: Query, group: Any, catalog: Catalog) -> None:
+    if group in (None, ""):
+        return
+    if isinstance(group, str) and group in catalog and catalog.role(group) in GROUPABLE and group not in (LAB_NAME, LAB_FLAG):
+        query.group_by = group
+    else:  # the number the user asked for is still right without the grouping: give it, and say what was left out
+        shown = group if isinstance(group, str) else "that"
+        options = ", ".join(_fields_with_role(catalog, GROUPABLE))
+        query.warnings.append(f"I cannot group by “{shown}”, so this is the overall figure. I can group by: {options}.")
+
+
+_BY_INTENT = {"clarify": _clarify, "out_of_scope": _out_of_scope, "help": _help, "get_record": _get_record, "navigate": _navigate,
+              "search": _search, "aggregate": _aggregate}
 
 
 def _record_id(value: Any) -> str:

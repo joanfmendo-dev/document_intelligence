@@ -34,6 +34,13 @@ COLUMNS = {  # name -> DuckDB type; the order is the Excel's
     "final_diagnosis": "VARCHAR", "plan": "VARCHAR", "progress_notes": "VARCHAR",
     "icd10_code": "VARCHAR", "icd10_chapter": "VARCHAR", "icd10_category": "VARCHAR",
 }
+
+def record_template() -> dict:
+    """The shape of a record as get_fields wants it (record_template.json): its keys, the type of each value and the date format.
+    The values are an example and are never sent to the model."""
+    return json.loads((Path(__file__).parent / "record_template.json").read_text(encoding="utf-8"))
+
+
 ICD10_COLUMNS = ("icd10_code", "icd10_chapter", "icd10_category")  # not in the first version of the Excel: import_excel accepts it without them
 _DATES = {"dob", "encounter_date"}
 _JSON = {"vital_signs", "lab_results"}

@@ -39,10 +39,6 @@ class TokenCount:
     def totals() -> dict[str, int]:
         return dict(_totals)
 
-    @staticmethod
-    def print(msg_in: int, msg_out: int) -> None:
-        print(f"\033[94m[Tokens] This message - input: {msg_in} output: {msg_out}"
-              f" | Total - input: {_totals['input']} output: {_totals['output']}\033[0m")
 
 
 # ── Shared LLM helper ─────────────────────────────────────────────────────────
@@ -69,13 +65,21 @@ def image_content(text: str, images: list[Image.Image]) -> list[dict]:
     return parts
 
 
+def is_ollama(model: str) -> bool:
+    return model.startswith("ollama")
+
+
 class LLM:
+    """A text (or vision) model. `role` picks the model, key and URL from the settings ("text", "copilot", "vlm", "judge");
+    `model`, `api_key` and `base_url` override them for this instance."""
+
     def __init__(self, system: str = "", model: str | None = None, api_key: str | None = None,
-                 base_url: str | None = None, timeout: float = 600.0):
+                 base_url: str | None = None, timeout: float = 600.0, role: str = "text"):
+        config = s.role(role)
         self.system = system
-        self.model = model or s.LLM_MODEL
-        self.api_key = s.LLM_API_KEY if api_key is None else api_key
-        self.base_url = s.LLM_BASE_URL if base_url is None else base_url
+        self.model = model or config["model"]
+        self.api_key = config["api_key"] if api_key is None else api_key
+        self.base_url = config["base_url"] if base_url is None else base_url
         self.timeout = timeout
 
     def complete(self, messages: list[dict], **params) -> Completion:
@@ -83,7 +87,7 @@ class LLM:
         response_format, or provider options such as think=False for Ollama)."""
         import litellm
 
-        if self.model.startswith("ollama"):  # defaults that only make sense for Ollama
+        if is_ollama(self.model):  # defaults that only make sense for Ollama
             params.setdefault("num_ctx", s.OLLAMA_NUM_CTX)
             params.setdefault("keep_alive", s.OLLAMA_KEEP_ALIVE)
         system = [{"role": "system", "content": self.system}] if self.system else []

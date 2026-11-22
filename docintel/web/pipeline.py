@@ -8,7 +8,7 @@ from typing import Callable
 from ..database.data_transformation import ICD10
 from ..extraction.auto import extract_auto
 from ..extraction.fields import find_ungrounded, get_fields
-from ..shared.settings import s
+from ..database.records import record_template
 
 
 @dataclass
@@ -27,7 +27,7 @@ def run(path: Path, on_step: Callable[[str], None]) -> Extraction:
     if not document["text"].strip():
         raise ValueError("No text was found in the document. Is it blank, or is the image unreadable?")
     on_step("extracting")
-    fields = get_fields(document["text"], s.DB_JSON_TEMPLATE)
+    fields = get_fields(document["text"], record_template())
     ungrounded = find_ungrounded(fields, document["text"])  # before coding: the ICD-10 fields are derived, not read from the document
     on_step("coding")
     notice = ""

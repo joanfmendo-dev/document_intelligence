@@ -6,7 +6,7 @@
 objects...) and the date format. Its values are never sent to the model, because small models copy
 example values into fields the document does not contain.
 
-The model is whatever `settings.s.LLM_MODEL` says (default: gemma4:e2b through Ollama), or the `llm`
+The model is whatever `settings.s.LLM_MODEL` says, or the `llm`
 you pass in; nothing here is specific to one model.
 """
 from __future__ import annotations
@@ -17,7 +17,7 @@ import warnings
 from datetime import datetime
 from typing import Any
 
-from ..shared.llm import LLM
+from ..shared.llm import LLM, is_ollama
 from ..shared.settings import s
 
 SYSTEM_PROMPT = (
@@ -166,7 +166,7 @@ def get_fields(
         return _conform(None, json_format)  # nothing to read: do not ask the model to make something up
 
     llm = llm or LLM(SYSTEM_PROMPT)
-    if llm.model.startswith("ollama") and len(text) / 3 > s.OLLAMA_NUM_CTX - 2500:  # rough: ~3 chars per token
+    if is_ollama(llm.model) and len(text) / 3 > s.OLLAMA_NUM_CTX - 2500:  # rough: ~3 chars per token
         warnings.warn("The text may not fit in the model's context window (DOCINTEL_OLLAMA_NUM_CTX); "
                       "Ollama would cut it silently and fields could be missed.", stacklevel=2)
 

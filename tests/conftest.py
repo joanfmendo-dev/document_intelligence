@@ -3,6 +3,9 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import pytest
 
+from fakes import SEED, KeywordEmbedder
+
+from docintel.database import RecordDB
 from docintel.shared.settings import s
 
 
@@ -57,3 +60,14 @@ def ollama(monkeypatch):
     monkeypatch.setattr(s, "VLM_BASE_URL", server.url)
     yield server
     server.stop()
+
+
+@pytest.fixture
+def db():
+    """The 12-record seed database (fakes.SEED), with vectors from the keyword embedder."""
+    d = RecordDB(":memory:", embedder=KeywordEmbedder())
+    for r in SEED:
+        d.create_record(r)
+    d.embed_pending()
+    yield d
+    d.close()

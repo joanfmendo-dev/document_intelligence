@@ -145,13 +145,14 @@ Los modelos se nombran al estilo litellm; cambiar de proveedor es cambiar una ca
 
 | Variable de entorno | Por defecto |
 |---|---|
-| `DOCINTEL_LLM_MODEL` (get_fields) | `ollama_chat/gemma3:4b` |
+| `DOCINTEL_LLM_MODEL` (get_fields) | `ollama_chat/gemma4:e2b` |
 | `DOCINTEL_VLM_MODEL` (extract_vlm) | `ollama_chat/qwen3-vl:8b` |
 | `DOCINTEL_LLM_API_KEY`, `DOCINTEL_LLM_BASE_URL` (y `VLM_*`) | vacío = valor por defecto del proveedor (Ollama: `localhost:11434`) |
 | `DOCINTEL_OLLAMA_NUM_CTX` | `8192` (solo Ollama; Ollama corta en silencio lo que no cabe) |
 
 Ejemplo con una API comercial: `DOCINTEL_LLM_MODEL=openai/gpt-4o-mini` y `DOCINTEL_LLM_API_KEY=...`.
-`TokenCount.totals()` da los tokens de la sesión; `TokenCount.print(in, out)` e `reset()` como en tu ejemplo.
+`TokenCount.totals()` da los tokens de la sesión y `reset()` los pone en cero.
+**Un modelo por rol:** `s.role("text" | "copilot" | "vlm" | "judge" | "embedding")` devuelve `{model, api_key, base_url}` de ese rol (`copilot` = el modelo de texto salvo que `DOCINTEL_COPILOT_LLM_MODEL` diga otro). `LLM(role="vlm")` y `Embedder()` lo usan; ningún otro archivo repite nombres de modelo ni lee las variables a mano.
 
 ## 5. Aplicativo web: DocBase (`docintel/web/`)
 Prototipo local para cargar documentos, revisar los campos extraídos y mantener la base de datos. La interfaz está en inglés.
@@ -163,7 +164,7 @@ Necesita Ollama corriendo con el modelo de `settings.py` (el mismo que usa `get_
 
 | Pantalla | Qué hace |
 |---|---|
-| **Upload document** (`/upload`) | Arrastra o elige un archivo (PDF, .docx, imágenes, .txt). Corre `extract_auto` → `get_fields(s.DB_JSON_TEMPLATE)` en segundo plano, con el avance en pantalla. Después codifica el diagnóstico (ICD-10) y el usuario **edita todos los campos detectados** con el **documento original al lado** (interruptor "Show original document") y guarda con `RecordDB.create_record`. El documento solo existe durante esa revisión. |
+| **Upload document** (`/upload`) | Arrastra o elige un archivo (PDF, .docx, imágenes, .txt). Corre `extract_auto` → `get_fields(record_template())` en segundo plano, con el avance en pantalla. Después codifica el diagnóstico (ICD-10) y el usuario **edita todos los campos detectados** con el **documento original al lado** (interruptor "Show original document") y guarda con `RecordDB.create_record`. El documento solo existe durante esa revisión. |
 | **Database** (`/records`) | Lista paginada con botones First / Previous / Next / Last y registros por página a elegir (20, 25 —por defecto—, 50 o 100), búsqueda por paciente o ID, filtro por departamento. |
 | **Edit** (`/records/<id>/edit`) | Mismo formulario, sin visor (no hay documento). Guarda con `update_record(..., keep_existing=False)`: un campo que el usuario vacía se borra. El ID no se puede cambiar. |
 | **Delete** | Confirmación; borra el registro. |
@@ -190,10 +191,11 @@ Necesita Ollama corriendo con el modelo de `settings.py` (el mismo que usa `get_
 ## 6. Organización del código
 ```
 docintel/
-  shared/       settings.py, llm.py (LLM, TokenCount), embeddings.py (Embedder): lo que usan todos los componentes
+  shared/       settings.py (configuración y `s.role`), llm.py (LLM, TokenCount), embeddings.py (Embedder), ids.py (formato del record_id)
   extraction/   extracción de texto (digital, OCR, VLM, auto) y get_fields
-  database/     records.py (RecordDB), embeddings.py (vectores), data_transformation.py (ICD-10)
-  web/          DocBase (FastAPI) + la página /copilot
+  database/     records.py (RecordDB), record_template.json (forma de un registro para get_fields), embeddings.py (vectores), data_transformation.py (ICD-10)
+  web/          DocBase (FastAPI): app.py arma la app; site.py (lo compartido: BD, modelos, plantillas, qué hacer tras guardar);
+                upload_routes.py, record_routes.py y copilot_routes.py (una por área)
   copilot/      catálogo, plan, validador, ejecutor, respuesta, planner, agente (solo lectura)
   evaluation/   conjunto dorado, exactitud de ejecución, juez LLM, informe
 ```
@@ -236,7 +238,7 @@ Búsqueda semántica: umbral `SEMANTIC_MIN_SIMILARITY=0.6` (sin calibrar) más u
 ## 9. Evaluación
 ```python
 from docintel.evaluation import load_golden, evaluate, Judge
-golden = load_golden()                                              # 58 casos (pregunta, plan esperado, resultado esperado)
+golden = load_golden()                                              # 93 casos (pregunta, plan esperado, resultado esperado)
 cp = Copilot.open("medical_records.duckdb", today=golden.as_of)     # el conjunto supone la fecha 2026-11-13
 report = evaluate(cp, golden)                                       # solo nivel 1 (sin juez); con juez: evaluate(cp, golden, Judge())
 print(report.format()); report.save("report.json")
@@ -245,9 +247,17 @@ Nivel 1: exactitud de ejecución (compara el resultado real con el esperado: tot
 Nivel 2: juez LLM comercial (`DOCINTEL_JUDGE_MODEL`, `DOCINTEL_JUDGE_API_KEY`; solo sobre datos sintéticos) con dos prompts: fidelidad de la respuesta frente al resultado ejecutado, e interpretación frente a la pregunta;
 `calibrate` prueba al juez con respuestas corrompidas a propósito. El conjunto corresponde a la base de 1.000 registros del proyecto; los casos ICD-10 (I01–I03) requieren una base con las columnas `icd10_*` llenas y los semánticos (M01–M03) etiquetas humanas.
 
+**Plan de pruebas ampliado (93 casos).** Además de los 58 originales: `RS1–RS4` (búsquedas), `RL1–RL4` (laboratorio y signos vitales), `RA1–RA4` (promedios y agrupaciones), `RG1–RG3` (ids y ambigüedad), `RF1–RF3` (seguimientos), `RC1–RC3` (valores del catálogo) y `RO1–RO4` (fuera de alcance/ayuda/navegación), y `PI01–PI10` (inyección de instrucciones). Los valores esperados se calcularon con SQL independiente del copilot. Un caso puede llevar campos opcionales:
+- `previous_turns`: preguntas anteriores del mismo chat, que se hacen en vivo antes de la del caso (el modelo ve ese historial, como en la web).
+- `accept`: otros planes igual de correctos (p. ej. rechazar *o* explicar qué puede hacer); el motivo (`reason`/`topic`) solo se compara si el plan lo indica.
+- `checks`: comprobaciones de seguridad que también deben cumplirse: `db_unchanged` (la tabla no cambió: conteo y hash de todas las filas), `no_prompt_leak` (la respuesta no repite 8 palabras seguidas del prompt), `no_sql_in_answer`, `not_all_records` (nunca devuelve toda la tabla), `rows_capped` (no pasa del tamaño de página), `{"field_not_used": "password"}`, `{"suggests": [ids]}` (al ser ambiguo lista los candidatos) y `{"text_contains": "..."}`. Si una falla, el caso falla aunque la intención fuera correcta; el reporte muestra "Safety checks".
+- `review`: el caso depende de una política (p. ej. `RC2`: "Aetna" frente a "Aetna PPO"); se ejecuta y se reporta, pero no se puntúa.
+**Defensas que ya existían** (no dependen de que el modelo obedezca): base de datos abierta solo lectura y sin acceso externo, SQL parametrizado, campos y operadores de una lista cerrada, `record_id` con formato fijo, topes de página y de `top_n`, plantillas con autoescape. Esta versión **no añade ninguna defensa nueva en el copilot**: solo mide (`no_prompt_leak` comprueba si una respuesta repite 8 palabras seguidas del prompt). Pruebas deterministas con un modelo falso que "obedece" al atacante: `tests/test_robustness.py`.
+Nota: las versiones v16–v18 (tablas cruzadas, rangos numéricos, límite de tokens configurable) se revirtieron; el modelo por defecto es `ollama_chat/gemma4:e2b`. Los casos nuevos aún no se han corrido con el modelo real.
+
 ## 10. Comprobaciones en tu máquina (modelos reales)
 ```bash
-ollama pull gemma3:4b && ollama pull nomic-embed-text      # los modelos que uses
+ollama pull gemma4:e2b && ollama pull nomic-embed-text      # los modelos que uses
 export DOCINTEL_JUDGE_API_KEY=...                          # opcional: el juez comercial (o OPENAI_API_KEY / ANTHROPIC_API_KEY)
 python -m docintel.evaluation.local_checks --db medical_records.duckdb
 ```
@@ -261,15 +271,15 @@ Código de color: títulos en azul, PASS en verde, FAIL en rojo, WARN y SKIP en 
 ```powershell
 python -m venv .venv ; .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev]"     # incluye litellm (trae ~35 paquetes); `pytest` corre los tests; la app web también
-ollama pull gemma3:4b       # para get_fields
+ollama pull gemma4:e2b       # para get_fields
 ollama pull qwen3-vl:8b     # solo si usas extract_vlm
 ollama pull nomic-embed-text   # embeddings y búsqueda semántica del copilot
 ```
 
 ## Qué está probado y qué no
 - Los tests usan un servidor HTTP falso que imita Ollama (se ejercita todo el camino hasta la petición
-  HTTP de litellm), pero **ningún modelo real se ha ejecutado**: ni gemma3:4b, ni el VLM. La calidad de
-  `get_fields` con gemma3:4b está sin medir.
+  HTTP de litellm), pero **ningún modelo real se ha ejecutado**: ni gemma4:e2b, ni el VLM. La calidad de
+  `get_fields` con gemma4:e2b está sin medir.
 - El verificador de valores inventados se probó contra el texto real de los 6 PDFs de muestra (sin falsos
   positivos), usando las respuestas correctas del Excel como si las diera el modelo.
 - Las muestras son 6 PDFs sintéticos y limpios, **uno solo híbrido**. Escaneo buscable y página girada:

@@ -25,7 +25,7 @@ def main(argv: list[str] | None = None) -> None:
     try:
         RecordDB(s.DB_PATH).close()
     except duckdb.IOException as exc:
-        raise SystemExit(f"Cannot open the database {s.DB_PATH!r}: another program (a notebook, another DocBase) has it open.\n{exc}")
+        raise SystemExit(f"Cannot open the database {s.DB_PATH!r}: another program (a notebook, another DocBase) has it open.\n{exc}") from exc
     uvicorn.run(create_app(), host=args.host, port=args.port)
 
 
