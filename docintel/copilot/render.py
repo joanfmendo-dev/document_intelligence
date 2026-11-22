@@ -54,6 +54,7 @@ class Answer:
     result: Result | None = None
     page: int = 1
     has_more: bool = False
+    pages: int = 1                             # how many pages of `page_size` rows the whole result has
     trace: list[dict] = field(default_factory=list)      # what was done to get this answer, in order (see explain())
 
     def explain(self, system_chars: int = 300) -> str:
@@ -183,6 +184,7 @@ def render(query: Query, result: Result | None = None, page_size: int = 25) -> A
             if semantic:
                 ans.summary += " These are matches by meaning, not exact text; the most similar come first."
             ans.has_more = last < result.total
+            ans.pages = -(-result.total // page_size)
         if result.coverage and result.coverage[0] < result.coverage[1]:
             ans.notes.append(f"Semantic search covers {result.coverage[0]} of {result.coverage[1]} records; the rest have no embedding yet.")
         ans.text = "\n".join([ans.interpretation, ans.summary, *_table_text(ans.columns, ans.rows), *ans.notes])

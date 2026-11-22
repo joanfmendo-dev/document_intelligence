@@ -4,6 +4,7 @@
 <h1>Ask the copilot</h1>
 <p class="sub">Chat with the saved records in your own words; it remembers this conversation. It only reads: it never changes, exports or explains a record.</p>
 <div id="chat" class="chat" aria-live="polite">
+{% for t in turns %}<div class="msg me">{{ t.question }}</div><section class="card msg bot">{{ t.html|safe }}</section>{% endfor %}{# t.html is our own rendering of _answer.html, escaped when it was made #}
 {% if answer %}<div class="msg me">{{ question }}</div><section class="card msg bot">{% include "_answer.html" %}</section>{% endif %}
 </div>
 <form method="post" action="/copilot" class="card" data-chat>
@@ -11,6 +12,7 @@
 <input id="question" name="question" type="search" maxlength="500" required autofocus autocomplete="off">
 <input type="hidden" name="previous" value="{{ previous }}">
 <div class="actions" style="margin-top:12px"><button class="btn pri" type="submit">Ask</button></div>
-{% if not answer %}<p class="hint mute">For example: {% for e in examples %}“{{ e }}”{{ '; ' if not loop.last }}{% endfor %}</p>{% endif %}
+{% if not answer and not turns %}<p class="hint mute">For example: {% for e in examples %}“{{ e }}”{{ '; ' if not loop.last }}{% endfor %}</p>{% endif %}
 </form>
+<form method="post" action="/copilot/clear" class="actions" style="margin-top:8px"><button class="btn" type="submit" title="Forget this conversation (also on the server)">Clear conversation</button></form>
 {% endblock %}

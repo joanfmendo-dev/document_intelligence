@@ -4,15 +4,16 @@ from __future__ import annotations
 import json
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from starlette.datastructures import FormData
 from starlette.exceptions import HTTPException
 
 from ..copilot import Copilot
 from ..copilot.planner import MAX_TURNS
-from .site import Site, read_form
+from .site import Site, go, read_form
 
 MAX_QUESTION = 500
+COOKIE = "docbase_chat"
 KEEPS_THE_PLAN = ("clarify", "error", "out_of_scope", "help", "navigate")  # these keep the earlier plan for the next message
 EXAMPLES = ("Patients over 60 in Cardiology this year", "How many records per department?", "Who came in with trouble breathing at night?",
             "Average heart rate for patients with chest pain")
@@ -33,28 +34,41 @@ def copilot_routes(site: Site) -> APIRouter:
     router = APIRouter()
 
     def context(**extra) -> dict:
-        return {**dict(active="copilot", question="", answer=None, previous="", plan_json="", examples=EXAMPLES), **extra}
+        return {**dict(active="copilot", question="", answer=None, previous="", plan_json="", turns=[], examples=EXAMPLES), **extra}
 
-    def ask(form: FormData):
-        """The question, the answer, and the plan to show: from a new question (with the chat so far, or just the previous plan)
+    def ask(form: FormData, history: list[dict] | None = None):
+        """The question, the answer, and the plan to show: from a new question (with the conversation so far, or just the previous plan)
         or from a plan and a page ('show more': no call to the model)."""
         question = str(form.get("question") or "")[:MAX_QUESTION]
         previous = json_field(form, "previous", (dict, type(None)))
         plan = json_field(form, "plan", (dict, type(None)))
-        history = json_field(form, "history", (list, type(None))) or []
         try:
             page = max(1, int(form.get("page") or 1))
         except ValueError:
             raise HTTPException(400, BAD_REQUEST) from None
-        history = [h for h in history if isinstance(h, dict)][-MAX_TURNS:]
         with site.open_db() as db:
             copilot = Copilot.from_db(db, catalog_path=site.catalog_file, llm=site.copilot_llm)
             answer = copilot.answer_plan(plan, page) if plan else copilot.ask(question, previous, history=history)
         return question, previous, answer
 
+    def chat_id(request: Request) -> str:
+        return request.cookies.get(COOKIE) or site.chats.new_id()
+
+    def remember(request: Request, response: Response, cid: str) -> Response:
+        if request.cookies.get(COOKIE) != cid:
+            response.set_cookie(COOKIE, cid, httponly=True, samesite="lax")
+        return response
+
     @router.get("/copilot")
     def copilot_page(request: Request):
-        return site.render(request, "copilot.html", **context())
+        cid = chat_id(request)
+        return remember(request, site.render(request, "copilot.html", **context(turns=site.chats.turns(cid))), cid)
+
+    @router.post("/copilot/clear")
+    def copilot_clear(request: Request):
+        """Forget the conversation, here on the server as well as on the page."""
+        site.chats.clear(chat_id(request))
+        return go("/copilot")
 
     @router.post("/copilot")
     def copilot_ask(request: Request, form: FormData = Depends(read_form)):
@@ -66,10 +80,15 @@ def copilot_routes(site: Site) -> APIRouter:
 
     @router.post("/copilot/ask")
     def copilot_chat(request: Request, form: FormData = Depends(read_form)):
-        """One turn of the chat: the answer as an HTML fragment, with what the page needs to send back next time."""
-        question, _, answer = ask(form)
+        """One turn of the chat: the answer as an HTML fragment. The conversation is kept on the server; a request with a `plan`
+        is the user turning the page of an earlier answer (`turn`): it asks nothing new and only updates that turn."""
+        cid = chat_id(request)
+        paging = bool(form.get("plan"))
+        question, _, answer = ask(form, site.chats.history(cid, MAX_TURNS))
+        turn = int(form.get("turn") or -1) if paging else site.chats.add(cid, question, answer.plan, answer.summary)
         plan_json = json.dumps(answer.plan) if answer.plan else ""
-        html = site.templates.get_template("_answer.html").render(request=request, answer=answer, question=question, plan_json=plan_json)
-        return JSONResponse({"html": html, "kind": answer.kind, "plan": answer.plan, "reply": answer.summary})
+        html = site.templates.get_template("_answer.html").render(request=request, answer=answer, question=question, plan_json=plan_json, turn=turn)
+        site.chats.set_html(cid, turn, html)
+        return remember(request, JSONResponse({"html": html, "kind": answer.kind, "plan": answer.plan, "reply": answer.summary, "turn": turn}), cid)
 
     return router

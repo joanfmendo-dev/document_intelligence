@@ -16,6 +16,7 @@ from ..database import RecordDB
 from ..shared.embeddings import EmbeddingError
 from ..shared.settings import s
 from . import forms, pipeline as default_pipeline
+from .chat import ChatStore
 from .jobs import Jobs
 from .storage import UploadStore
 
@@ -48,6 +49,7 @@ class Site:
         self.uploads = UploadStore(uploads_dir or s.UPLOADS_DIR)
         self.jobs = Jobs(pipeline or default_pipeline.run)
         self.copilot_llm, self.embedder = copilot_llm, embedder
+        self.chats = ChatStore()
         self.templates = Jinja2Templates(directory=HERE / "templates")
         self.templates.env.globals.update(
             {name: getattr(forms, name) for name in ("PATIENT", "ICD", "HISTORY", "EXAM", "FINAL", "VITALS", "LAB_COLUMNS", "LAB_TESTS",

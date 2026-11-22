@@ -64,12 +64,11 @@
   const cancel = document.querySelector('[data-cancel]');
   if (cancel) document.addEventListener('keydown', event => { if (event.key === 'Escape') location.href = cancel.href; });
 
-  // Copilot chat: each question is sent without leaving the page; the browser keeps the conversation and sends the last turns back.
+  // Copilot chat: each question is sent without leaving the page; the server keeps the conversation (and rebuilds it when you come back).
   const chatForm = document.querySelector('form[data-chat]');
   if (chatForm) {
     const log = document.getElementById('chat');
     const input = chatForm.elements.question;
-    const history = [];
     const bubble = (text, cls, html) => {
       const el = document.createElement(html ? 'section' : 'div');
       el.className = 'msg ' + cls + (html ? ' card' : '');
@@ -80,16 +79,17 @@
     const send = async (fields) => {
       const body = new FormData();
       Object.entries(fields).forEach(([k, v]) => body.append(k, v));
-      body.append('history', JSON.stringify(history.slice(-8)));
       const r = await fetch('/copilot/ask', { method: 'POST', body });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
     };
-    const wire = (el, question) => el.querySelectorAll('form[data-more]').forEach(f => f.addEventListener('submit', async event => {
+    // The page buttons (First, Previous, Next, Last) of an answer: they fetch that page of the same plan, without asking the model.
+    const wire = el => el.querySelectorAll('form[data-more]').forEach(f => f.addEventListener('submit', async event => {
       event.preventDefault();
-      const data = Object.fromEntries(new FormData(f));
-      try { const out = await send(data); el.innerHTML = out.html; wire(el, question); } catch (e) { /* keep what is shown */ }
+      try { const out = await send(Object.fromEntries(new FormData(f))); el.innerHTML = out.html; wire(el); el.scrollIntoView({ block: 'nearest' }); } catch (e) { /* keep what is shown */ }
     }));
+    log.querySelectorAll('.msg.bot').forEach(wire);
+    if (log.lastElementChild) log.lastElementChild.scrollIntoView({ block: 'nearest' });
     chatForm.addEventListener('submit', async event => {
       event.preventDefault();
       const question = input.value.trim();
@@ -100,8 +100,7 @@
       try {
         const out = await send({ question });
         pending.innerHTML = out.html;
-        wire(pending, question);
-        if (out.plan) history.push({ question, plan: out.plan, reply: out.reply });
+        wire(pending);
       } catch (e) {
         pending.innerHTML = '<p class="err" role="alert">The assistant could not be reached. Please try again.</p>';
       }

@@ -31,10 +31,11 @@ class Embedder:
 
 class LLM:
     def __init__(self):
-        self.replies, self.calls = [], 0
+        self.replies, self.calls, self.messages = [], 0, []
 
     def run(self, messages, **params):
         self.calls += 1
+        self.messages.append(messages)
         reply = self.replies.pop(0)
         if isinstance(reply, Exception):
             raise reply
@@ -94,14 +95,14 @@ def test_a_follow_up_sends_the_previous_plan(env):
     assert env.llm.calls == 2
 
 
-def test_show_more_does_not_call_the_model(env):
+def test_next_does_not_call_the_model(env):
     seed(env, 30)
     env.llm.replies = [{"intent": "search", "filters": [{"field": "department", "op": "in", "value": ["Cardiology"]}]}]
     page = env.client.post("/copilot", data={"question": "everyone"}).text
-    assert "Show more" in page
+    assert "Page 1 of 2" in page and "Show more" not in page
     plan = page.split('name="plan" value="')[1].split('"')[0].replace("&#34;", '"')
     second = env.client.post("/copilot", data={"question": "everyone", "plan": plan, "page": "2"}).text
-    assert env.llm.calls == 1 and "Showing 26–30" in second
+    assert env.llm.calls == 1 and "Showing 26–30" in second and "Page 2 of 2" in second
 
 
 def test_a_model_that_is_down_gives_a_message_not_an_error_page(env):
@@ -152,24 +153,83 @@ def test_editing_refreshes_the_vector_and_deleting_removes_it(env):
     assert "Cardiology" in env.catalog.read_text()
 
 
-def test_the_chat_endpoint_returns_a_fragment_and_uses_the_history(env):
+def test_the_chat_endpoint_returns_a_fragment(env):
     seed(env, 3)
     bad = {"intent": "aggregate", "filters": [], "aggregate": {"metric": "count", "group_by": "lab_results.test_name"}}
     env.llm.replies = [bad]
     out = env.client.post("/copilot/ask", data={"question": "How many patients were tested for creatinine?"}).json()
     assert out["kind"] == "aggregate" and "3 records match." in out["html"] and "I cannot group by" in out["html"]
-    assert "<html" not in out["html"] and out["plan"]["intent"] == "aggregate"
-    env.llm.replies = [{"intent": "search", "filters": [{"field": "department", "op": "in", "value": ["Cardiology"]}]}]
-    history = [{"question": "How many?", "plan": out["plan"], "reply": out["reply"]}]
-    second = env.client.post("/copilot/ask", data={"question": "list them", "history": json.dumps(history)}).json()
-    assert second["kind"] == "results" and 'href="/records/R001/edit"' in second["html"]
+    assert "<html" not in out["html"] and out["plan"]["intent"] == "aggregate" and out["turn"] == 0
 
 
-def test_the_chat_endpoint_rejects_a_bad_history(env):
-    assert env.client.post("/copilot/ask", data={"question": "x", "history": '{"a": 1}'}).status_code == 400
-    assert env.client.post("/copilot/ask", data={"question": "x", "history": "nope"}).status_code == 400
+CARDIO = {"intent": "search", "filters": [{"field": "department", "op": "in", "value": ["Cardiology"]}]}
 
 
+def ask_chat(env, question, plan=CARDIO):
+    env.llm.replies = [plan]
+    return env.client.post("/copilot/ask", data={"question": question}).json()
+
+
+def test_the_conversation_is_still_there_when_the_user_comes_back(env):
+    seed(env, 3)
+    ask_chat(env, "cardiology patients")
+    ask_chat(env, "<b>again</b>")
+    env.client.get("/records")                                   # the user visits another page...
+    page = env.client.get("/copilot").text                       # ...and returns
+    assert page.count('class="msg me"') == 2 and "cardiology patients" in page and "3 records found." in page
+    assert "&lt;b&gt;again&lt;/b&gt;" in page and "<b>again</b>" not in page     # what is shown again is as escaped as the first time
+    assert "For example:" not in page                            # it is not an empty page
+
+
+def test_the_model_sees_the_conversation_the_server_kept(env):
+    seed(env, 3)
+    first = ask_chat(env, "cardiology patients")
+    ask_chat(env, "only over 60")
+    sent = json.dumps(env.llm.messages[1])
+    assert "cardiology patients" in sent and first["reply"] in sent
+
+
+def test_clear_conversation_forgets_it_on_the_server(env):
+    seed(env, 3)
+    ask_chat(env, "cardiology patients")
+    r = env.client.post("/copilot/clear", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/copilot"
+    page = env.client.get("/copilot").text
+    assert 'class="msg me"' not in page and "For example:" in page and "Clear conversation" in page
+    ask_chat(env, "again")
+    assert "cardiology patients" not in json.dumps(env.llm.messages[-1])      # the model no longer sees the old turns
+
+
+def test_two_browsers_have_two_conversations(env):
+    from fastapi.testclient import TestClient
+    seed(env, 3)
+    ask_chat(env, "my question")
+    other = TestClient(env.client.app)
+    assert 'class="msg me"' not in other.get("/copilot").text
+
+
+def test_the_page_buttons_of_a_long_result(env):
+    seed(env, 60)
+    out = ask_chat(env, "everyone")
+    html = out["html"]
+    assert "Page 1 of 3" in html and html.count("data-more") == 4
+    buttons = [b for b in html.split("<button") [1:]]
+    assert ["disabled" in b.split(">")[0] for b in buttons[:4]] == [True, True, False, False]       # First and Previous off on page 1
+    for target, label in (("3", "Last"), ("2", "Previous"), ("1", "First"), ("2", "Next")):
+        plan = json.dumps(out["plan"])
+        data = {"question": "everyone", "plan": plan, "page": target, "turn": str(out["turn"])}
+        page = env.client.post("/copilot/ask", data=data).json()
+        assert f"Page {target} of 3" in page["html"] and page["turn"] == out["turn"]
+    assert env.llm.calls == 1                                    # turning pages never asks the model
+    stored = env.client.get("/copilot").text
+    assert "Page 2 of 3" in stored and stored.count('class="msg me"') == 1  # the conversation remembers the page it was left on, and has one turn
+    last = env.client.post("/copilot/ask", data={"question": "everyone", "plan": json.dumps(out["plan"]), "page": "3", "turn": "0"}).json()["html"]
+    assert [("disabled" in b.split(">")[0]) for b in last.split("<button")[1:5]] == [False, False, True, True]
+
+
+def test_a_short_result_has_no_page_buttons(env):
+    seed(env, 5)
+    assert "data-more" not in ask_chat(env, "everyone")["html"]
 # ---------------------------------------------------------------- hostile text is escaped in the chat
 def test_hostile_text_from_a_record_is_escaped_in_the_chat(env):  
     seed(env, 1)

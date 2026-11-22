@@ -11,8 +11,8 @@
 <dl>{% for c in answer.columns %}{% if answer.rows[0][c] is not none %}<dt class="sub" style="margin:8px 0 0">{{ c.replace('_', ' ') }}</dt><dd style="margin:0">{{ answer.rows[0][c] }}</dd>{% endif %}{% endfor %}</dl>
 {% endif %}
 {% if answer.suggestions %}<p class="sub">Did you mean: {{ answer.suggestions|join(', ') }}?</p>{% endif %}
-{% if answer.links or answer.has_more %}<div class="actions" style="justify-content:flex-start;margin-top:12px">
-{% for l in answer.links %}<a class="btn" href="{{ l.url }}">{{ l.label }}</a>{% endfor %}
-{% if answer.has_more %}<form method="post" action="/copilot" data-more style="display:inline"><input type="hidden" name="plan" value="{{ plan_json }}"><input type="hidden" name="question" value="{{ question }}"><input type="hidden" name="previous" value="{{ previous|default('') }}"><input type="hidden" name="page" value="{{ answer.page + 1 }}"><button class="btn" type="submit">Show more</button></form>{% endif %}
-</div>{% endif %}
+{% if answer.pages > 1 %}<nav class="row" aria-label="Pages of results" style="margin-top:12px"><p class="sub" style="margin:0">Page {{ answer.page }} of {{ answer.pages }}</p>
+<div class="actions">{% for label, target, off in (('« First', 1, answer.page <= 1), ('Previous', answer.page - 1, answer.page <= 1), ('Next', answer.page + 1, answer.page >= answer.pages), ('Last »', answer.pages, answer.page >= answer.pages)) %}
+<form method="post" action="/copilot" data-more style="display:inline"><input type="hidden" name="plan" value="{{ plan_json }}"><input type="hidden" name="question" value="{{ question }}"><input type="hidden" name="previous" value="{{ previous|default('') }}"><input type="hidden" name="turn" value="{{ turn|default('') }}"><input type="hidden" name="page" value="{{ target }}"><button class="btn" type="submit"{{ ' disabled' if off }}>{{ label }}</button></form>{% endfor %}</div></nav>{% endif %}
+{% if answer.links %}<div class="actions" style="justify-content:flex-start;margin-top:12px">{% for l in answer.links %}<a class="btn" href="{{ l.url }}">{{ l.label }}</a>{% endfor %}</div>{% endif %}
 {% if answer.trace %}<details style="margin-top:12px"><summary class="sub" style="cursor:pointer">How this answer was obtained</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;background:#F4F6F9;border-radius:8px;padding:12px;margin:8px 0 0">{{ answer.explain() }}</pre></details>{% endif %}
