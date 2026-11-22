@@ -52,6 +52,12 @@ def test_all_steps_run_and_the_report_is_written(source, tmp_path):
     assert not [c for c in report.checks if c.status == "FAIL"]
 
 
+def test_runs_repeats_the_golden_set_and_reports_the_stability(source, tmp_path):
+    report = run(source, tmp_path, "--no-judge", "--steps", "planner", "--runs", "2")
+    detail = next(c for c in report.checks if c.name == "planner: golden set")
+    assert any(line.startswith("stability over 2 runs:") for line in detail.lines)
+
+
 def test_the_original_database_is_not_touched_unless_asked(source, tmp_path):
     run(source, tmp_path, "--no-judge", "--steps", "embeddings")
     con = duckdb.connect(str(source), read_only=True)

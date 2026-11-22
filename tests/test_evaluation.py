@@ -10,6 +10,7 @@ from docintel.copilot import Copilot
 from docintel.copilot.plan import INTENTS
 from docintel.database import RecordDB
 from docintel.evaluation import Golden, GoldenCase, Judge, calibrate, evaluate, execution_verdict, load_golden, wilson
+from docintel.evaluation.runner import stability
 from docintel.evaluation.execution import compare_aggregate, compare_list, ids_digest, values_equal
 from docintel.evaluation.judge import add_claim, corrupt_number, judge_view
 
@@ -174,7 +175,7 @@ def test_the_robustness_cases_are_all_there():
     assert by["PI02"].checks == ["no_prompt_leak"] and by["PI04"].checks == ["no_sql_in_answer"]
 
 
-KNOWN_CHECKS = {"db_unchanged", "no_prompt_leak", "no_sql_in_answer", "not_all_records", "rows_capped", "field_not_used", "suggests", "text_contains"}
+KNOWN_CHECKS = {"db_unchanged", "no_prompt_leak", "no_sql_in_answer", "not_all_records", "rows_capped", "field_not_used", "suggests", "text_contains", "total_if_run"}
 
 
 # ================================================================ the runner
@@ -418,3 +419,45 @@ def test_an_unknown_check_is_an_error_not_a_pass(db):
     cases = [GoldenCase("U", "a", WRITE, checks=["nonsense"])]
     with pytest.raises(ValueError, match="unknown check"):
         run_cases(db, cases, FakeLLM(WRITE))
+
+
+def test_the_right_figure_with_a_label_is_the_same_answer():
+    assert compare_aggregate([[13]], [["Pulmonology", 13]]).level == "equivalent"
+    assert compare_aggregate([[13]], [["Pulmonology", 14]]).level == "mismatch"
+    assert compare_aggregate([[13]], [["Pulmonology", 13], ["Cardiology", 20]]).level == "mismatch"    # two groups are not one figure
+    assert compare_aggregate([[13]], [[1, 13]]).level == "mismatch"                                     # two numbers: which one is the answer?
+    assert compare_aggregate([[13]], [[13.0]]).level == "exact"
+
+
+def test_a_search_must_find_the_right_records_or_ask(db):
+    case = GoldenCase("T", "Cardiology patients", {"intent": "clarify"}, accept=[{"intent": "search"}], checks=[{"total_if_run": 5}])
+    wrong = {"intent": "search", "filters": [f("department", "in", ["Cardiology"]), f("age", "lt", 60)]}   # a narrower search than asked
+    right = {"intent": "search", "filters": [f("department", "in", ["Cardiology"])]}
+    ask = {"intent": "clarify", "question": "Which department?"}
+    total = db.con.execute("SELECT count(*) FROM medical_records WHERE department = 'Cardiology'").fetchone()[0]
+    case.checks = [{"total_if_run": total}]
+    outcomes = {name: run_cases(db, [case], FakeLLM(plan))[0]["T"].passed for name, plan in (("right", right), ("wrong", wrong), ("ask", ask))}
+    assert outcomes == {"right": True, "wrong": False, "ask": True}
+
+
+def test_a_case_that_flips_between_runs_is_reported_as_unstable(db):
+    case_a, case_b, case_c = (GoldenCase(i, "x", {"intent": "clarify"}) for i in "abc")
+    ask, search = {"intent": "clarify", "question": "?"}, {"intent": "search", "filters": [f("department", "in", ["Cardiology"])]}
+    def report(*plans):
+        c = Copilot.from_db(db, llm=FakeLLM(*plans), embedder=KeywordEmbedder(), today=None)
+        return evaluate(c, Golden(TODAY, [case_a, case_b, case_c]))
+    reports = [report(ask, ask, search), report(ask, search, search), report(ask, ask, search)]
+    assert stability(reports) == {"b": 2}           # a always passes, c never, b 2 of 3
+    assert stability(reports[:1]) == {}
+
+
+def test_every_example_in_the_planner_prompt_is_a_valid_plan(db):
+    from docintel.copilot import validate
+    from docintel.copilot.planner import INSTRUCTIONS
+    catalog = Copilot.from_db(db, llm=FakeLLM(), embedder=KeywordEmbedder(), today=None).catalog
+    examples = re.findall(r"^Question: (.+)\n(\{.*\})$", INSTRUCTIONS, re.M)
+    assert len(examples) >= 10
+    for question, plan in examples:
+        validate(json.loads(plan), catalog, today=TODAY)          # raises if the example breaks the rules it teaches
+    for reason in ("write", "export", "clinical_advice", "unrelated"):
+        assert f"{reason}:" in INSTRUCTIONS and f'"reason": "{reason}"' in INSTRUCTIONS

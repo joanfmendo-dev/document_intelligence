@@ -36,7 +36,7 @@ from ..shared.llm import LLM
 from ..shared.settings import s
 from .golden import load_golden
 from .judge import Judge, calibrate, judge_view
-from .runner import evaluate
+from .runner import evaluate, stability
 
 TOKENS = 400  # room for a model that thinks before it answers (50 left some of them with an empty reply)
 SAMPLE_PENDING = 200  # vectors deleted in the copy: well over the 2 batches the interrupted run lets through
@@ -319,7 +319,8 @@ def check_semantic(report: Report, db_path: Path, embedder: Any, llm: Any) -> No
 
 
 # ---------------------------------------------------------------------------------------------------- 4 and 5: planner and judge
-def check_planner(report: Report, db_path: Path, embedder: Any, llm: Any, judge: Judge | None, out: Path, min_accuracy: float) -> dict:
+def check_planner(report: Report, db_path: Path, embedder: Any, llm: Any, judge: Judge | None, out: Path, min_accuracy: float,
+                  runs: int = 1) -> dict:
     from ..copilot import Copilot
 
     golden = load_golden()
@@ -346,6 +347,14 @@ def check_planner(report: Report, db_path: Path, embedder: Any, llm: Any, judge:
         return {}
     finally:
         cp.close()
+    extra = []
+    if runs > 1:  # the same questions again, to tell the cases that flip (noise) from the ones that always fail (defects)
+        cp2 = Copilot.open(db_path, llm=llm, embedder=embedder, today=golden.as_of)
+        try:
+            extra = [evaluate(cp2, golden, None, only=only) for _ in range(runs - 1)]
+        finally:
+            cp2.close()
+    flaky = stability([eval_report, *extra]) if extra else {}
     out.mkdir(parents=True, exist_ok=True)
     eval_report.save(out / "eval_report.json")
     summary = eval_report.summary()
@@ -366,6 +375,9 @@ def check_planner(report: Report, db_path: Path, embedder: Any, llm: Any, judge:
     rate = acc["rate"] or 0
     safety = summary["safety_checks"]
     unsafe = [x["id"] for x in summary["failed"] if x.get("checks_failed")]
+    if extra:
+        lines.append(f"stability over {runs} runs: " + (", ".join(f"{i} {k}/{runs}" for i, k in sorted(flaky.items())) if flaky else "every case gave the same result")
+                     + "; end to end per run: " + ", ".join(f"{r.summary()['end_to_end']['correct']}/{r.summary()['end_to_end']['of']}" for r in [eval_report, *extra]))
     lines.append(f"safety checks (injection, writes, leaks, whole-table dumps): {safety['correct']}/{safety['of']} cases with every check held"
                  + (f"; FAILED: {', '.join(unsafe)}" if unsafe else ""))
     report.add(Check("planner: golden set", "PASS" if rate >= min_accuracy and not unsafe else "WARN",
@@ -417,6 +429,7 @@ def run(argv: list[str] | None = None, *, llm: Any = None, embedder: Any = None,
                     "(by default a sample is deleted so the interrupted-run check has work to interrupt); not with --in-place")
     ap.add_argument("--no-judge", action="store_true", help="never call the commercial judge")
     ap.add_argument("--color", choices=("auto", "always", "never"), default="auto", help="colours in the console (default: only on a terminal)")
+    ap.add_argument("--runs", type=int, default=1, help="run the golden set this many times and report the cases that change between runs (default 1)")
     ap.add_argument("--min-accuracy", type=float, default=0.8, help="execution accuracy that counts as PASS (default 0.8)")
     args = ap.parse_args(argv)
 
@@ -465,7 +478,7 @@ def run(argv: list[str] | None = None, *, llm: Any = None, embedder: Any = None,
             report.add(Check("planner: golden set", "SKIP", "the text model did not answer"))
         else:
             run_judge_inline = judge if "judge" in steps else None
-            samples = check_planner(report, work, embedder, llm, run_judge_inline, out, args.min_accuracy).get("samples", [])
+            samples = check_planner(report, work, embedder, llm, run_judge_inline, out, args.min_accuracy, args.runs).get("samples", [])
     if "judge" in steps:
         check_judge(report, judge, samples)
     path = report.save()

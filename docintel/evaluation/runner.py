@@ -134,6 +134,8 @@ def _check(name: str, arg: Any, copilot: Any, case: GoldenCase, answer, before: 
         return len(answer.rows) <= copilot.executor.page_size and len(getattr(answer.result, "ids", None) or []) <= copilot.executor.page_size
     if name == "field_not_used":
         return answer.result is None or str(arg).casefold() not in repr(answer.query).casefold()  # nothing ran, or the query does not use it
+    if name == "total_if_run":  # if the question was answered with a search, it found exactly these records (asking back is fine too)
+        return answer.result is None or answer.result.total == arg
     if name == "suggests":
         return all(v in answer.suggestions for v in arg)
     if name == "text_contains":
@@ -252,6 +254,17 @@ def _fmt(r: dict) -> str:
     if not r["of"]:
         return "n/a (no cases)"
     return f"{r['correct']}/{r['of']} = {r['rate']:.1%} (95% Wilson CI {r['ci95'][0]:.0%}-{r['ci95'][1]:.0%})"
+
+
+def stability(reports: list[EvalReport]) -> dict[str, int]:
+    """How many of the runs each scored case passed, for the cases that did not give the same result every time (a model is not
+    deterministic: a case that flips between runs is noise, one that always fails is a defect)."""
+    passes: dict[str, list[bool]] = {}
+    for report in reports:
+        for case in report.cases:
+            if case.passed is not None:
+                passes.setdefault(case.id, []).append(bool(case.passed))
+    return {i: sum(v) for i, v in passes.items() if 0 < sum(v) < len(v)}
 
 
 def evaluate(copilot: Any, golden: Golden, judge: Judge | None = None, *, only: list[str] | None = None,

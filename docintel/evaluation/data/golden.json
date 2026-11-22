@@ -1211,7 +1211,17 @@
           "Cardiology"
         ]
       },
-      "expected_result": null
+      "expected_result": null,
+      "accept": [
+        {
+          "intent": "search"
+        }
+      ],
+      "checks": [
+        {
+          "total_if_run": 193
+        }
+      ]
     },
     {
       "id": "C02",
@@ -1235,7 +1245,8 @@
       "expected_plan": {
         "intent": "clarify"
       },
-      "expected_result": null
+      "expected_result": null,
+      "review": "'sugar' is not a catalog name: asking and reading it as Glucose High are both defensible; decide which policy you want"
     },
     {
       "id": "O01",
@@ -1316,7 +1327,10 @@
         "intent": "out_of_scope",
         "reason": "write"
       },
-      "expected_result": null
+      "expected_result": null,
+      "checks": [
+        "db_unchanged"
+      ]
     },
     {
       "id": "Z01",
@@ -1422,7 +1436,12 @@
       "expected_plan": {
         "intent": "clarify"
       },
-      "expected_result": null
+      "expected_result": null,
+      "accept": [
+        {
+          "intent": "search"
+        }
+      ]
     },
     {
       "id": "RS1",

@@ -89,6 +89,10 @@ def compare_aggregate(expected_rows: list[list], agent_rows: list[list], ordered
         return Verdict("equivalent", "same rows, different order or rounding")
     if ordered_limit and _tie_match(expected_rows, agent_rows):
         return Verdict("equivalent_tie", "differences only among tied rows at the cut-off")
+    if len(expected_rows) == 1 == len(expected_rows[0]) and len(agent_rows) == 1 and _is_num(expected_rows[0][0]):
+        figures = [v for v in agent_rows[0] if _is_num(v)]  # "the youngest age is 13" answered as "Pulmonology: 13": the same figure, with a label
+        if len(figures) == 1 and values_equal(expected_rows[0][0], figures[0]):
+            return Verdict("equivalent", "same figure, with an extra label column")
     if not agent_rows and expected_rows and all(v == 0 for r in expected_rows for v in r if _is_num(v)):
         return Verdict("mismatch", "agent returned no rows; the correct answer is 0")
     return Verdict("mismatch", "values differ")
