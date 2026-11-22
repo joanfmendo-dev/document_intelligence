@@ -10,7 +10,7 @@ def test_complete_builds_the_ollama_request_and_counts_tokens(ollama):
     TokenCount.reset()
     done = LLM("SYSTEM TEXT").complete([{"role": "user", "content": "hi"}], temperature=0, max_tokens=500)
     body = ollama.requests[0]
-    assert body["model"] == "gemma3:4b"                                       # "ollama_chat/" prefix is routing only
+    assert body["model"] == "gemma4:e2b"                                       # "ollama_chat/" prefix is routing only
     assert [m["role"] for m in body["messages"]] == ["system", "user"] and body["messages"][0]["content"] == "SYSTEM TEXT"
     assert body["options"]["temperature"] == 0 and body["options"]["num_predict"] == 500
     assert body["options"]["num_ctx"] == s.OLLAMA_NUM_CTX and body["keep_alive"] == s.OLLAMA_KEEP_ALIVE

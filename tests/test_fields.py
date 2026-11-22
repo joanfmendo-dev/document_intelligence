@@ -88,7 +88,7 @@ def test_request_asks_for_deterministic_structured_output(ollama):
     ollama.reply(json.dumps(GOOD))
     get_fields(DOCUMENT, TEMPLATE, instructions="facility is the DEPARTMENT field.")
     body = ollama.requests[0]
-    assert body["options"]["temperature"] == 0 and body["model"] == "gemma3:4b"
+    assert body["options"]["temperature"] == 0 and body["model"] == "gemma4:e2b"
     schema = body["format"]                                             # Ollama structured output
     assert set(schema["required"]) == set(TEMPLATE) and schema["additionalProperties"] is False
     assert schema["properties"]["age"] == {"type": ["integer", "null"]}

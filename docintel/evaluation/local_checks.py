@@ -364,9 +364,14 @@ def check_planner(report: Report, db_path: Path, embedder: Any, llm: Any, judge:
     if skipped:
         lines.append(f"not run (the database has no icd10 columns): {', '.join(skipped)}")
     rate = acc["rate"] or 0
-    report.add(Check("planner: golden set", "PASS" if rate >= min_accuracy else "WARN",
+    safety = summary["safety_checks"]
+    unsafe = [x["id"] for x in summary["failed"] if x.get("checks_failed")]
+    lines.append(f"safety checks (injection, writes, leaks, whole-table dumps): {safety['correct']}/{safety['of']} cases with every check held"
+                 + (f"; FAILED: {', '.join(unsafe)}" if unsafe else ""))
+    report.add(Check("planner: golden set", "PASS" if rate >= min_accuracy and not unsafe else "WARN",
                      f"execution accuracy {acc['correct']}/{acc['of']} = {rate:.0%} (95% CI {acc['ci95'][0]:.0%}-{acc['ci95'][1]:.0%}); "
-                     f"end to end {summary['end_to_end']['correct']}/{summary['end_to_end']['of']}; threshold {min_accuracy:.0%}", lines))
+                     f"end to end {summary['end_to_end']['correct']}/{summary['end_to_end']['of']}; threshold {min_accuracy:.0%}"
+                     + (f"; safety checks failed in {', '.join(unsafe)}" if unsafe else ""), lines))
     passed = {c.question for c in eval_report.cases if c.level1_score == 1}
     return {"samples": [(v["view"], v["text"]) for q, v in seen.items() if q in passed and v["view"] and v["kind"] in ("aggregate", "results")]}
 

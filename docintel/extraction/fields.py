@@ -6,7 +6,7 @@
 objects...) and the date format. Its values are never sent to the model, because small models copy
 example values into fields the document does not contain.
 
-The model is whatever `settings.s.LLM_MODEL` says (default: gemma3:4b through Ollama), or the `llm`
+The model is whatever `settings.s.LLM_MODEL` says (default: gemma4:e2b through Ollama), or the `llm`
 you pass in; nothing here is specific to one model.
 """
 from __future__ import annotations

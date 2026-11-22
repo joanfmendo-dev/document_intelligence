@@ -1,7 +1,7 @@
 """Model settings shared by every LLM / VLM call.
 
 Models are named the way litellm names them, so switching provider is a one-line change:
-  "ollama_chat/gemma3:4b"   local, through Ollama (default)
+  "ollama_chat/gemma4:e2b"   local, through Ollama (default)
   "openai/gpt-4o-mini"      commercial API (also set the API key)
 Override with environment variables, or by assigning attributes: `settings.s.LLM_MODEL = "..."`.
 """
