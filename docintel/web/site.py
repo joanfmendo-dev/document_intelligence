@@ -16,6 +16,7 @@ from ..database import RecordDB
 from ..shared.embeddings import EmbeddingError
 from ..shared.settings import s
 from . import forms, pipeline as default_pipeline
+from .auth import NO_USERS, Auth
 from .chat import ChatStore
 from .jobs import Jobs
 from .storage import UploadStore
@@ -42,7 +43,7 @@ def found(value, what: str):
 
 class Site:
     def __init__(self, *, db_path=None, uploads_dir=None, pipeline: Callable | None = None, max_upload_mb: int | None = None,
-                 catalog_path=None, copilot_llm=None, embedder=None):
+                 catalog_path=None, copilot_llm=None, embedder=None, users: dict[str, str] | None = None):
         self.db_path = str(db_path or s.DB_PATH)
         self.catalog_file = Path(catalog_path) if catalog_path else Path(self.db_path).with_suffix(".catalog.yaml")
         self.max_mb = max_upload_mb or s.MAX_UPLOAD_MB
@@ -50,6 +51,11 @@ class Site:
         self.jobs = Jobs(pipeline or default_pipeline.run)
         self.copilot_llm, self.embedder = copilot_llm, embedder
         self.chats = ChatStore()
+        if users is None:
+            users = s.USERS
+            if not users:
+                raise RuntimeError(NO_USERS)
+        self.auth = Auth(users, s.SECRET_KEY)
         self.templates = Jinja2Templates(directory=HERE / "templates")
         self.templates.env.globals.update(
             {name: getattr(forms, name) for name in ("PATIENT", "ICD", "HISTORY", "EXAM", "FINAL", "VITALS", "LAB_COLUMNS", "LAB_TESTS",
@@ -59,6 +65,7 @@ class Site:
         return RecordDB(self.db_path, embedder=self.embedder)
 
     def render(self, request: Request, name: str, status: int = 200, **context):
+        context.setdefault("user", getattr(request.state, "user", None))
         context.setdefault("flash", FLASH.get(request.query_params.get("ok", ""), "").format(id=request.query_params.get("id", "")))
         return self.templates.TemplateResponse(request, name, context, status_code=status)
 

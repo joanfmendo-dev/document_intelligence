@@ -80,6 +80,7 @@
       const body = new FormData();
       Object.entries(fields).forEach(([k, v]) => body.append(k, v));
       const r = await fetch('/copilot/ask', { method: 'POST', body });
+      if (r.status === 401) { location.href = '/login?next=/copilot'; }  // the session ended
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
     };

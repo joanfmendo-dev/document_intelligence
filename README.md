@@ -194,7 +194,7 @@ docintel/
   shared/       settings.py (configuración y `s.role`), llm.py (LLM, TokenCount), embeddings.py (Embedder), ids.py (formato del record_id)
   extraction/   extracción de texto (digital, OCR, VLM, auto) y get_fields
   database/     records.py (RecordDB), record_template.json (forma de un registro para get_fields), embeddings.py (vectores), data_transformation.py (ICD-10)
-  web/          DocBase (FastAPI): app.py arma la app; site.py (lo compartido: BD, modelos, plantillas, qué hacer tras guardar);
+  web/          DocBase (FastAPI): app.py arma la app; auth.py (inicio de sesión) y passwd.py (genera el hash de una contraseña); site.py (lo compartido: BD, modelos, plantillas, qué hacer tras guardar);
                 upload_routes.py, record_routes.py y copilot_routes.py (una por área)
   copilot/      catálogo, plan, validador, ejecutor, respuesta, planner, agente (solo lectura)
   evaluation/   conjunto dorado, exactitud de ejecución, juez LLM, informe
@@ -254,6 +254,10 @@ Nivel 2: juez LLM comercial (`DOCINTEL_JUDGE_MODEL`, `DOCINTEL_JUDGE_API_KEY`; s
 - `review`: el caso depende de una política (p. ej. `RC2`: "Aetna" frente a "Aetna PPO"); se ejecuta y se reporta, pero no se puntúa.
 **Defensas que ya existían** (no dependen de que el modelo obedezca): base de datos abierta solo lectura y sin acceso externo, SQL parametrizado, campos y operadores de una lista cerrada, `record_id` con formato fijo, topes de página y de `top_n`, plantillas con autoescape. Esta versión **no añade ninguna defensa nueva en el copilot**: solo mide (`no_prompt_leak` comprueba si una respuesta repite 8 palabras seguidas del prompt). Pruebas deterministas con un modelo falso que "obedece" al atacante: `tests/test_robustness.py`.
 Nota: las versiones v16–v18 (tablas cruzadas, rangos numéricos, límite de tokens configurable) se revirtieron; el modelo por defecto es `ollama_chat/gemma4:e2b`. Los casos nuevos aún no se han corrido con el modelo real.
+
+**Inicio de sesión (web).** La app **siempre** pide usuario y contraseña: sin sesión, cualquier página redirige a `/login?next=...` (el POST recibe 401) y solo `/login` y `/static/` están abiertos. **No arranca si no hay usuarios** (`python -m docintel.web` termina con las instrucciones). Pasos: `python -m docintel.web.passwd maria` pide la contraseña e imprime `maria:<hash>` (scrypt con sal); esas entradas van en la variable `DOCINTEL_USERS`, separadas por comas (en el shell, entre comillas simples porque el hash lleva `$`). `DOCINTEL_SECRET_KEY` firma la cookie de sesión (`docbase_session`, `HttpOnly`, `SameSite=Lax`, `Secure` bajo HTTPS, 8 horas); sin ella se crea una clave al arrancar y un reinicio cierra todas las sesiones. Cinco contraseñas erróneas bloquean a ese usuario cinco minutos; el mensaje es el mismo si el usuario no existe. "Sign out" (`POST /logout`) aparece en el menú. El chat del copilot sigue ligado al navegador (cookie `docbase_chat`), no al usuario. `python -m docintel.web` sigue escuchando solo en `127.0.0.1`. Solo las pruebas desactivan el login (`create_app(users={})`).
+
+**Chat del copilot (web).** La conversación se guarda en el servidor, por sesión del navegador (cookie `docbase_chat`, en memoria: hasta 50 turnos y 20 conversaciones; reiniciar DocBase la borra), así que al volver a "Ask the copilot" desde otra página se ve de nuevo, con la página de resultados donde se dejó. El modelo ve los últimos turnos guardados en el servidor, no los que mande el navegador. El botón "Clear conversation" (`POST /copilot/clear`) la borra en el servidor y en la página. Cuando un resultado tiene más de una página (25 filas) hay botones « First, Previous, Next y Last con "Page X of N"; cambiar de página no llama al modelo.
 
 ## 10. Comprobaciones en tu máquina (modelos reales)
 ```bash

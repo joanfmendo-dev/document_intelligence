@@ -42,7 +42,7 @@ def env(tmp_path):
             raise RuntimeError(e.error)
         return e.result
 
-    e.app = create_app(db_path=e.db, uploads_dir=e.up, pipeline=fake, allowed_hosts=["testserver"], max_upload_mb=1)
+    e.app = create_app(db_path=e.db, uploads_dir=e.up, pipeline=fake, allowed_hosts=["testserver"], max_upload_mb=1, users={})
     with TestClient(e.app) as client:
         e.client = client
         yield e

@@ -53,6 +53,11 @@ class Settings:
     UPLOADS_DIR = os.getenv("DOCINTEL_UPLOADS_DIR", "uploads")
     MAX_UPLOAD_MB = int(os.getenv("DOCINTEL_MAX_UPLOAD_MB", "25"))
 
+    # sign-in: "name:hash,name2:hash2" (hashes from `python -m docintel.web.passwd`); the app does not start without users.
+    # SECRET_KEY signs the session cookie; without it a random key is made at each start, so a restart signs everybody out.
+    USERS = dict(pair.strip().split(":", 1) for pair in os.getenv("DOCINTEL_USERS", "").split(",") if ":" in pair)
+    SECRET_KEY = os.getenv("DOCINTEL_SECRET_KEY", "")
+
     def role(self, name: str) -> dict[str, str]:
         """{"model", "api_key", "base_url"} of a role: "text", "vlm", "embedding", "judge", or "copilot" (the text model unless
         COPILOT_LLM_MODEL names another one; the same key and URL as the text model)."""

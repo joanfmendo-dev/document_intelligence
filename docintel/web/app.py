@@ -5,7 +5,7 @@ database; browse, edit and delete saved records. The uploaded file is only kept 
     app = create_app()          # or: python -m docintel.web
 
 Pages are rendered on the server (Jinja2); the little JavaScript in static/app.js only adds drag & drop,
-the lab-rows buttons and Esc on the delete dialog. The routes live in upload_routes, record_routes and copilot_routes;
+the lab-rows buttons and Esc on the delete dialog. The routes live in auth, upload_routes, record_routes and copilot_routes;
 what they share (database, models, templates, what to do after a write) is in site.Site.
 """
 from __future__ import annotations
@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from .auth import COOKIE, OPEN_PATHS, auth_routes
 from .copilot_routes import copilot_routes
 from .record_routes import record_routes
 from .site import HERE, Site
@@ -29,13 +30,14 @@ LOCAL_HOSTS = ["localhost", "127.0.0.1", "[::1]"]
 
 
 def create_app(*, db_path=None, uploads_dir=None, pipeline: Callable | None = None, allowed_hosts: list[str] | None = None,
-               max_upload_mb: int | None = None, catalog_path=None, copilot_llm=None, embedder=None) -> FastAPI:
+               max_upload_mb: int | None = None, catalog_path=None, copilot_llm=None, embedder=None, users: dict[str, str] | None = None) -> FastAPI:
     """Build the app. Every argument defaults to the matching setting (docintel.shared.settings); `pipeline` is
     (path, on_step) -> Extraction, and is swapped in tests so they need neither OCR nor a model.
     `copilot_llm` and `embedder` replace the language and embedding models (tests); `catalog_path` is the copilot's catalog file,
-    which only this app writes (by default next to the database)."""
+    which only this app writes (by default next to the database). `users` ({name: hash}) are the people who may sign in;
+    by default they come from DOCINTEL_USERS and the app does not start without them. `users={}` switches the sign-in off (tests only)."""
     site = Site(db_path=db_path, uploads_dir=uploads_dir, pipeline=pipeline, max_upload_mb=max_upload_mb,
-                catalog_path=catalog_path, copilot_llm=copilot_llm, embedder=embedder)
+                catalog_path=catalog_path, copilot_llm=copilot_llm, embedder=embedder, users=users)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -54,6 +56,9 @@ def create_app(*, db_path=None, uploads_dir=None, pipeline: Callable | None = No
         origin = request.headers.get("origin")
         if request.method not in ("GET", "HEAD", "OPTIONS") and origin and urlsplit(origin).netloc != request.headers.get("host"):
             return PlainTextResponse("Origin not allowed.", status_code=403)
+        request.state.user = site.auth.user_of(request.cookies.get(COOKIE))
+        if site.auth.enabled and not request.state.user and not request.url.path.startswith(OPEN_PATHS):
+            return site.auth.deny(request)
         response = await call_next(request)
         response.headers["Cache-Control"] = "no-store"  # these are medical records: keep them out of the browser cache
         return response
@@ -62,6 +67,6 @@ def create_app(*, db_path=None, uploads_dir=None, pipeline: Callable | None = No
     async def http_error(request: Request, exc: HTTPException):
         return site.render(request, "error.html", exc.status_code, active="", title=f"Error {exc.status_code}", message=exc.detail)
 
-    for routes in (upload_routes, record_routes, copilot_routes):
+    for routes in (auth_routes, upload_routes, record_routes, copilot_routes):
         app.include_router(routes(site))
     return app

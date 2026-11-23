@@ -15,7 +15,6 @@ local_checks/
 /*.ipynb
 uv.lock
 medical_records.duckdb
-medical_records.catalog.yaml
 # Mac
 .DS_Store
 

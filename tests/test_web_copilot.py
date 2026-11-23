@@ -50,7 +50,7 @@ def rec(i, dept="Cardiology", **more):
 def env(tmp_path):
     e = SimpleNamespace(db=tmp_path / "db.duckdb", catalog=tmp_path / "cat.yaml", emb=Embedder(), llm=LLM())
     e.app = create_app(db_path=e.db, uploads_dir=tmp_path / "up", allowed_hosts=["testserver"], catalog_path=e.catalog,
-                       copilot_llm=e.llm, embedder=e.emb, pipeline=lambda p, on: Extraction(FIELDS, [], 1))
+                       copilot_llm=e.llm, embedder=e.emb, pipeline=lambda p, on: Extraction(FIELDS, [], 1), users={})
     with TestClient(e.app) as client:
         e.client = client
         yield e

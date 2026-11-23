@@ -97,3 +97,6 @@ th{color:#5B6573;font-size:13px}
 .msg.bot{margin:0;padding:16px 20px}
 .msg.bot>:first-child{margin-top:0}
 .btn:disabled{opacity:.45;cursor:not-allowed}
+.signout{margin-left:auto;display:flex;align-items:center;gap:12px;font-size:14px;color:#5B6573}
+.signout button{font:inherit;font-size:14px;background:none;border:0;padding:8px 0;color:#2457D6;cursor:pointer}
+.login{max-width:360px;margin:48px auto}.login .btn{width:100%}

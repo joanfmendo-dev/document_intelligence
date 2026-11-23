@@ -4,17 +4,21 @@ from __future__ import annotations
 import argparse
 
 from ..shared.settings import s
+from .auth import NO_USERS
 
 LOOPBACK = ("127.0.0.1", "localhost", "::1")
 
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="python -m docintel.web", description="DocBase: load documents, review their fields, keep them in a local database.")
-    parser.add_argument("--host", default="127.0.0.1", help="only this computer can reach the app (it has no login): 127.0.0.1 or localhost")
+    parser.add_argument("--host", default="127.0.0.1", help="only this computer can reach the app: 127.0.0.1 or localhost")
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args(argv)
     if args.host not in LOOPBACK:
-        parser.error("the app has no login yet, so it only listens on this computer (127.0.0.1 / localhost)")
+        parser.error("the app only listens on this computer (127.0.0.1 / localhost)")
+
+    if not s.USERS:
+        raise SystemExit(NO_USERS)
 
     import duckdb
     import uvicorn
