@@ -1,7 +1,7 @@
-"""Sign-in: a login page and a signed cookie. The app always asks for it: it will not start without users (DOCINTEL_USERS).
+"""Sign-in: a login page and a signed cookie. The app always asks for it: it will not start without users (the "users" of config.json, or USERS).
 
-Users are "name:hash" pairs; make a hash with `python -m docintel.web.passwd`. The cookie holds "user|expiry|signature"
-(HMAC with DOCINTEL_SECRET_KEY, or a random key per start, which signs everybody out when the app restarts)."""
+Users are "name:hash" pairs; `python -m docintel.web.passwd` makes them. The cookie holds "user|expiry|signature"
+(HMAC with SECRET_KEY, or a random key per start, which signs everybody out when the app restarts)."""
 from __future__ import annotations
 
 import hashlib
@@ -21,9 +21,9 @@ MAX_FAILURES, LOCK_SECONDS = 5, 300  # 5 wrong passwords for one user lock that 
 
 
 NO_USERS = ("DocBase asks everybody to sign in, and no users are configured.\n"
-            "  1. python -m docintel.web.passwd maria        (asks for the password and prints maria:<hash>)\n"
-            "  2. set DOCINTEL_USERS to that line (several users: join them with commas; in a shell use single quotes, the hash has '$')\n"
-            "  3. start the app again")
+            "  1. python -m docintel.web.passwd maria        (asks for the password and saves maria, hashed, in config.json)\n"
+            "  2. start the app again\n"
+            "(Servers can use the USERS variable instead: 'maria:<hash>,luis:<hash>'.)")
 
 
 def hash_password(password: str, salt: str | None = None) -> str:

@@ -67,7 +67,7 @@ La tabla `medical_records` tiene las mismas 24 columnas, en el mismo orden, que 
 ```python
 from docintel import RecordDB, get_fields
 
-with RecordDB("medical_records.duckdb") as db:           # por defecto DOCINTEL_DB_PATH
+with RecordDB("medical_records.duckdb") as db:           # por defecto DB_PATH
     db.create_record(get_fields(text, json_format))       # RecordExistsError si el record_id ya existe
     db.update_record(get_fields(text2, json_format))      # RecordNotFoundError si no existe
     db.read_record("SYNUS-2026-0571")                     # dict como el de get_fields, o None
@@ -141,18 +141,33 @@ Con el Excel de prueba: 456 registros por actualizar (449 vacíos y 7 con códig
 
 ## 4. Modelos: un solo lugar (`docintel/shared/settings.py`, `docintel/shared/llm.py`)
 Todo acceso a modelos pasa por `LLM` (sobre **litellm**) y `TokenCount`, como en tu ejemplo.
-Los modelos se nombran al estilo litellm; cambiar de proveedor es cambiar una cadena:
+Los modelos se nombran al estilo litellm; cambiar de proveedor es cambiar una cadena, y **lo que es sensible o de cada máquina vive en `config.json`**
+(carpeta desde donde arrancas; la variable `CONFIG_FILE` cambia la ruta; está en `.gitignore`; es JSON estricto: sin comentarios ni comas finales):
+
+```json
+{
+    "users": [{"username": "maria", "hash": "<hash>"}],
+    "models": {
+        "extraction_llm_model": {"model": "ollama_chat/gemma4:e2b",  "api_key": "", "base_url": ""},
+        "vlm_model":            {"model": "ollama_chat/qwen3-vl:8b", "api_key": "", "base_url": ""},
+        "embedding_model":      {"model": "ollama/nomic-embed-text", "api_key": "", "base_url": ""},
+        "copilot_model":        {"model": "ollama_chat/gemma4:e2b",  "api_key": "", "base_url": ""},
+        "judge_model":          {"model": "openai/gpt-4o-mini",      "api_key": "", "base_url": ""}
+    }
+}
+```
+
+Cada tarea tiene su modelo, clave y dirección: extraer campos de los documentos, transcribir imágenes (VLM), los embeddings, el plan del copiloto y el juez de la evaluación pueden ser modelos distintos. Los que falten en el archivo usan el valor de arriba. Para usar OpenAI, Claude, etc. basta cambiar `model` y poner la `api_key` (p. ej. `"openai/gpt-4o-mini"`); Azure OpenAI: `"azure/<nombre-del-despliegue>"`, la `api_key` y en `base_url` la dirección del recurso (la versión de la API es la de litellm, o la variable `AZURE_API_VERSION`). Un archivo con una llave de modelo desconocida (p. ej. el antiguo `llm_model`) o con usuarios sin `username` y `hash` da un error claro en vez de ignorarse. Orden de prioridad: **variable de entorno > `config.json` > valor por defecto**. Las variables se llaman igual que el ajuste de `shared/settings.py` (sin prefijo): son útiles en un servidor, donde un secreto es mejor que un archivo.
 
 | Variable de entorno | Por defecto |
 |---|---|
-| `DOCINTEL_LLM_MODEL` (get_fields) | `ollama_chat/gemma4:e2b` |
-| `DOCINTEL_VLM_MODEL` (extract_vlm) | `ollama_chat/qwen3-vl:8b` |
-| `DOCINTEL_LLM_API_KEY`, `DOCINTEL_LLM_BASE_URL` (y `VLM_*`) | vacío = valor por defecto del proveedor (Ollama: `localhost:11434`) |
-| `DOCINTEL_OLLAMA_NUM_CTX` | `8192` (solo Ollama; Ollama corta en silencio lo que no cabe) |
+| `EXTRACTION_LLM_MODEL`, `VLM_MODEL`, `EMBEDDING_MODEL`, `COPILOT_MODEL`, `JUDGE_MODEL` | los de arriba |
+| `EXTRACTION_LLM_API_KEY`, `EXTRACTION_LLM_BASE_URL` (y lo mismo con `VLM_`, `EMBEDDING_`, `COPILOT_`, `JUDGE_`) | vacío = valor por defecto del proveedor (Ollama: `localhost:11434`) |
+| `OLLAMA_NUM_CTX` | `8192` (solo Ollama; Ollama corta en silencio lo que no cabe) |
 
-Ejemplo con una API comercial: `DOCINTEL_LLM_MODEL=openai/gpt-4o-mini` y `DOCINTEL_LLM_API_KEY=...`.
+Ejemplo con una API comercial: `EXTRACTION_LLM_MODEL=openai/gpt-4o-mini` y `EXTRACTION_LLM_API_KEY=...`.
 `TokenCount.totals()` da los tokens de la sesión y `reset()` los pone en cero.
-**Un modelo por rol:** `s.role("text" | "copilot" | "vlm" | "judge" | "embedding")` devuelve `{model, api_key, base_url}` de ese rol (`copilot` = el modelo de texto salvo que `DOCINTEL_COPILOT_LLM_MODEL` diga otro). `LLM(role="vlm")` y `Embedder()` lo usan; ningún otro archivo repite nombres de modelo ni lee las variables a mano.
+**Un modelo por rol:** `s.role("extraction" | "copilot" | "vlm" | "judge" | "embedding")` devuelve `{model, api_key, base_url}` de esa tarea. `LLM(role="vlm")` y `Embedder()` lo usan; ningún otro archivo repite nombres de modelo ni lee las variables a mano.
 
 ## 5. Aplicativo web: DocBase (`docintel/web/`)
 Prototipo local para cargar documentos, revisar los campos extraídos y mantener la base de datos. La interfaz está en inglés.
@@ -179,10 +194,10 @@ Necesita Ollama corriendo con el modelo de `settings.py` (el mismo que usa `get_
   los vuelve a buscar al guardar; un código que no existe en ICD-10 se rechaza. Si el modelo falla en ese paso, la carga no se pierde: los campos
   quedan vacíos con un aviso. Esos campos no se marcan como "no encontrado en el documento" (se derivan, no se leen).
 - Si el ID ya existe, la app pregunta antes de reemplazarlo (casilla "Replace the existing record").
-- **No se guardan los documentos originales**: el archivo cargado espera en `uploads/` (`DOCINTEL_UPLOADS_DIR`) solo mientras se revisa,
+- **No se guardan los documentos originales**: el archivo cargado espera en `uploads/` (`UPLOADS_DIR`) solo mientras se revisa,
   y se borra al guardar o cancelar (y la carpeta se vacía al arrancar la app). En la base solo quedan los datos.
 - El visor (solo en la revisión) usa el visor de PDF del navegador; un .docx no se puede mostrar y se ofrece como descarga.
-- Ajustes: `DOCINTEL_DB_PATH`, `DOCINTEL_UPLOADS_DIR`, `DOCINTEL_MAX_UPLOAD_MB` (25).
+- Ajustes: `DB_PATH`, `UPLOADS_DIR`, `MAX_UPLOAD_MB` (25).
 - **Sin usuarios ni contraseña**: solo escucha en `127.0.0.1` (rechaza otro `--host`), valida el `Host` y el `Origin` de los
   POST, y no deja páginas en la caché del navegador. Antes de desplegarlo en la nube hace falta autenticación.
 - DuckDB deja abrir el archivo para escribir a un solo proceso: cierra notebooks u otras copias de la app que lo usen.
@@ -194,14 +209,14 @@ docintel/
   shared/       settings.py (configuración y `s.role`), llm.py (LLM, TokenCount), embeddings.py (Embedder), ids.py (formato del record_id)
   extraction/   extracción de texto (digital, OCR, VLM, auto) y get_fields
   database/     records.py (RecordDB), record_template.json (forma de un registro para get_fields), embeddings.py (vectores), data_transformation.py (ICD-10)
-  web/          DocBase (FastAPI): app.py arma la app; auth.py (inicio de sesión) y passwd.py (genera el hash de una contraseña); site.py (lo compartido: BD, modelos, plantillas, qué hacer tras guardar);
+  web/          DocBase (FastAPI): app.py arma la app; auth.py (inicio de sesión) y passwd.py (crea o cambia un usuario en config.json); site.py (lo compartido: BD, modelos, plantillas, qué hacer tras guardar);
                 upload_routes.py, record_routes.py y copilot_routes.py (una por área)
   copilot/      catálogo, plan, validador, ejecutor, respuesta, planner, agente (solo lectura)
   evaluation/   conjunto dorado, exactitud de ejecución, juez LLM, informe
 ```
 
 ## 7. Embeddings (búsqueda por significado)
-Mismo modelo que `clinic_assistant`: `ollama/nomic-embed-text` (`DOCINTEL_EMBEDDING_MODEL`). **Ojo:** el `settings.py` de ese proyecto no venía en el zip;
+Mismo modelo que `clinic_assistant`: `ollama/nomic-embed-text` (`EMBEDDING_MODEL`). **Ojo:** el `settings.py` de ese proyecto no venía en el zip;
 el modelo se dedujo de su docstring. Si usaba otro, cambia la variable. El texto de cada registro es `chief_complaint` + `history_of_present_illness` + `final_diagnosis`;
 los vectores viven en la tabla `record_embeddings` (con hash del texto y modelo, para saber cuándo están desactualizados).
 
@@ -232,7 +247,7 @@ El **catálogo** (`catalog.yaml`: campos, roles, valores con conteos) lo genera 
 **Controles del plan:** si la pregunta nombra un valor del catálogo (una prueba de laboratorio, un departamento…) que el plan no usa, el agente vuelve a preguntar al modelo una vez, mostrándole su propia respuesta y la observación; si aun así falta, la respuesta lo advierte. El validador avisa de lo que ignora (un `field` en un conteo, claves de otra intención) y de un conteo sin ninguna condición ("covers all the records"). Todo queda en `a.trace` (paso `check`).
 Un `group_by` imposible (p. ej. por prueba de laboratorio) no genera una pregunta: se da la cifra total y se avisa.
 **Trazabilidad:** `a.trace` es la lista ordenada de pasos (llamadas al LLM con lo enviado y la respuesta cruda, plan, validación con avisos, cada sentencia SQL con sus parámetros y filas devueltas, embedding de la consulta); `print(a.explain())` la muestra legible, y la página `/copilot` la muestra en "How this answer was obtained".
-Búsqueda semántica: umbral `SEMANTIC_MIN_SIMILARITY=0.6` (sin calibrar) más un corte relativo `SEMANTIC_RELATIVE_MARGIN=0.05` (`DOCINTEL_SEMANTIC_RELATIVE_MARGIN`): solo se muestran los resultados a menos de 0.05 del mejor, porque los puntajes de nomic-embed-text están comprimidos (0.5–0.75) y el umbral solo no separa. La traza muestra cuántos pasaron cada filtro (paso `semantic_filter`).
+Búsqueda semántica: umbral `SEMANTIC_MIN_SIMILARITY=0.6` (sin calibrar) más un corte relativo `SEMANTIC_RELATIVE_MARGIN=0.05` (`SEMANTIC_RELATIVE_MARGIN`): solo se muestran los resultados a menos de 0.05 del mejor, porque los puntajes de nomic-embed-text están comprimidos (0.5–0.75) y el umbral solo no separa. La traza muestra cuántos pasaron cada filtro (paso `semantic_filter`).
 **Correcciones tras las primeras corridas con modelos reales:** el prompt da la fecha de hoy y exige el token para "this year"/"last month" (un año literal en el ejemplo se copiaba); se aceptan `{"last_n_days": 30}` y valores copiados con su conteo (`"Cardiology (54)"`); un nombre de prueba exacto incluye sus variantes (`Glucose` → `Glucose (point-of-care)`, con aviso); un id parcial (`0007`) abre el registro `SYNUS-2026-0007`, y si encaja con varios pregunta cuál.
 
 ## 9. Evaluación
@@ -244,7 +259,7 @@ report = evaluate(cp, golden)                                       # solo nivel
 print(report.format()); report.save("report.json")
 ```
 Nivel 1: exactitud de ejecución (compara el resultado real con el esperado: total y ids para listas, filas para agregados; intervalo de Wilson).
-Nivel 2: juez LLM comercial (`DOCINTEL_JUDGE_MODEL`, `DOCINTEL_JUDGE_API_KEY`; solo sobre datos sintéticos) con dos prompts: fidelidad de la respuesta frente al resultado ejecutado, e interpretación frente a la pregunta;
+Nivel 2: juez LLM comercial (`JUDGE_MODEL`, `JUDGE_API_KEY`; solo sobre datos sintéticos) con dos prompts: fidelidad de la respuesta frente al resultado ejecutado, e interpretación frente a la pregunta;
 `calibrate` prueba al juez con respuestas corrompidas a propósito. El conjunto corresponde a la base de 1.000 registros del proyecto; los casos ICD-10 (I01–I03) requieren una base con las columnas `icd10_*` llenas y los semánticos (M01–M03) etiquetas humanas.
 
 **Plan de pruebas ampliado (93 casos).** Además de los 58 originales: `RS1–RS4` (búsquedas), `RL1–RL4` (laboratorio y signos vitales), `RA1–RA4` (promedios y agrupaciones), `RG1–RG3` (ids y ambigüedad), `RF1–RF3` (seguimientos), `RC1–RC3` (valores del catálogo) y `RO1–RO4` (fuera de alcance/ayuda/navegación), y `PI01–PI10` (inyección de instrucciones). Los valores esperados se calcularon con SQL independiente del copilot. Un caso puede llevar campos opcionales:
@@ -255,14 +270,14 @@ Nivel 2: juez LLM comercial (`DOCINTEL_JUDGE_MODEL`, `DOCINTEL_JUDGE_API_KEY`; s
 **Defensas que ya existían** (no dependen de que el modelo obedezca): base de datos abierta solo lectura y sin acceso externo, SQL parametrizado, campos y operadores de una lista cerrada, `record_id` con formato fijo, topes de página y de `top_n`, plantillas con autoescape. Esta versión **no añade ninguna defensa nueva en el copilot**: solo mide (`no_prompt_leak` comprueba si una respuesta repite 8 palabras seguidas del prompt). Pruebas deterministas con un modelo falso que "obedece" al atacante: `tests/test_robustness.py`.
 Nota: las versiones v16–v18 (tablas cruzadas, rangos numéricos, límite de tokens configurable) se revirtieron; el modelo por defecto es `ollama_chat/gemma4:e2b`. Los casos nuevos aún no se han corrido con el modelo real.
 
-**Inicio de sesión (web).** La app **siempre** pide usuario y contraseña: sin sesión, cualquier página redirige a `/login?next=...` (el POST recibe 401) y solo `/login` y `/static/` están abiertos. **No arranca si no hay usuarios** (`python -m docintel.web` termina con las instrucciones). Pasos: `python -m docintel.web.passwd maria` pide la contraseña e imprime `maria:<hash>` (scrypt con sal); esas entradas van en la variable `DOCINTEL_USERS`, separadas por comas (en el shell, entre comillas simples porque el hash lleva `$`). `DOCINTEL_SECRET_KEY` firma la cookie de sesión (`docbase_session`, `HttpOnly`, `SameSite=Lax`, `Secure` bajo HTTPS, 8 horas); sin ella se crea una clave al arrancar y un reinicio cierra todas las sesiones. Cinco contraseñas erróneas bloquean a ese usuario cinco minutos; el mensaje es el mismo si el usuario no existe. "Sign out" (`POST /logout`) aparece en el menú. El chat del copilot sigue ligado al navegador (cookie `docbase_chat`), no al usuario. `python -m docintel.web` sigue escuchando solo en `127.0.0.1`. Solo las pruebas desactivan el login (`create_app(users={})`).
+**Inicio de sesión (web).** La app **siempre** pide usuario y contraseña: sin sesión, cualquier página redirige a `/login?next=...` (el POST recibe 401) y solo `/login` y `/static/` están abiertos. **No arranca si no hay usuarios** (`python -m docintel.web` termina con las instrucciones). Pasos: `python -m docintel.web.passwd maria` pide la contraseña dos veces y la guarda, con un hash scrypt con sal (no cifrada: nadie puede recuperarla), como `{"username": "maria", "hash": "<hash>"}` en la llave `"users"` de `config.json`, reemplazando la entrada si maria ya existe (así también cambia una contraseña) y sin tocar el resto del archivo; si el archivo no existe lo crea con los modelos por defecto. En un servidor se puede usar la variable `USERS` (`maria:<hash>,luis:<hash>`, entre comillas simples en el shell porque el hash lleva `$`; el script imprime esa línea); si un usuario está en ambos, gana la variable. `SECRET_KEY` firma la cookie de sesión (`docbase_session`, `HttpOnly`, `SameSite=Lax`, `Secure` bajo HTTPS, 8 horas); sin ella se crea una clave al arrancar y un reinicio cierra todas las sesiones. Cinco contraseñas erróneas bloquean a ese usuario cinco minutos; el mensaje es el mismo si el usuario no existe. "Sign out" (`POST /logout`) aparece en el menú. El chat del copilot sigue ligado al navegador (cookie `docbase_chat`), no al usuario. `python -m docintel.web` sigue escuchando solo en `127.0.0.1`. Solo las pruebas desactivan el login (`create_app(users={})`).
 
 **Chat del copilot (web).** La conversación se guarda en el servidor, por sesión del navegador (cookie `docbase_chat`, en memoria: hasta 50 turnos y 20 conversaciones; reiniciar DocBase la borra), así que al volver a "Ask the copilot" desde otra página se ve de nuevo, con la página de resultados donde se dejó. El modelo ve los últimos turnos guardados en el servidor, no los que mande el navegador. El botón "Clear conversation" (`POST /copilot/clear`) la borra en el servidor y en la página. Cuando un resultado tiene más de una página (25 filas) hay botones « First, Previous, Next y Last con "Page X of N"; cambiar de página no llama al modelo.
 
 ## 10. Comprobaciones en tu máquina (modelos reales)
 ```bash
 ollama pull gemma4:e2b && ollama pull nomic-embed-text      # los modelos que uses
-export DOCINTEL_JUDGE_API_KEY=...                          # opcional: el juez comercial (o OPENAI_API_KEY / ANTHROPIC_API_KEY)
+export JUDGE_API_KEY=...                          # opcional: el juez comercial (o ponla en "judge_model" de config.json; o OPENAI_API_KEY / ANTHROPIC_API_KEY)
 python -m docintel.evaluation.local_checks --db medical_records.duckdb
 ```
 Corre en orden: 1) modelos (embeddings, texto, ¿obedece el esquema JSON?, juez), 2) embeddings (todos los registros, una corrida interrumpida que se reanuda,

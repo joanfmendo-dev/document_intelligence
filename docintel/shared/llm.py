@@ -70,11 +70,11 @@ def is_ollama(model: str) -> bool:
 
 
 class LLM:
-    """A text (or vision) model. `role` picks the model, key and URL from the settings ("text", "copilot", "vlm", "judge");
+    """A text (or vision) model. `role` picks the model, key and URL from the settings ("extraction", "copilot", "vlm", "judge");
     `model`, `api_key` and `base_url` override them for this instance."""
 
     def __init__(self, system: str = "", model: str | None = None, api_key: str | None = None,
-                 base_url: str | None = None, timeout: float = 600.0, role: str = "text"):
+                 base_url: str | None = None, timeout: float = 600.0, role: str = "extraction"):
         config = s.role(role)
         self.system = system
         self.model = model or config["model"]

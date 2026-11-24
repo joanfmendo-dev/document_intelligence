@@ -144,7 +144,7 @@ def test_model_comes_from_settings_or_from_the_llm_you_pass(ollama, monkeypatch)
     from docintel.shared.settings import s
 
     ollama.reply(json.dumps(GOOD))
-    monkeypatch.setattr(s, "LLM_MODEL", "ollama_chat/llama3.2:3b")
+    monkeypatch.setattr(s, "EXTRACTION_LLM_MODEL", "ollama_chat/llama3.2:3b")
     get_fields(DOCUMENT, TEMPLATE)
     assert ollama.requests[-1]["model"] == "llama3.2:3b"
     ollama.reply(json.dumps(GOOD))

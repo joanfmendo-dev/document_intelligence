@@ -1,9 +1,12 @@
 import json
+import os
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import pytest
 
 from fakes import SEED, KeywordEmbedder
+
+os.environ["CONFIG_FILE"] = os.devnull + ".none"  # before docintel is imported: the tests never read the real config.json
 
 from docintel.database import RecordDB
 from docintel.shared.settings import s
@@ -56,7 +59,7 @@ class FakeOllama:
 @pytest.fixture
 def ollama(monkeypatch):
     server = FakeOllama()
-    monkeypatch.setattr(s, "LLM_BASE_URL", server.url)
+    monkeypatch.setattr(s, "EXTRACTION_LLM_BASE_URL", server.url)
     monkeypatch.setattr(s, "VLM_BASE_URL", server.url)
     yield server
     server.stop()

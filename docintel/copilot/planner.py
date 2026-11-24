@@ -90,7 +90,7 @@ class Planner:
     today: date | None = None  # the date given to the model; None = the real date
 
     def __init__(self, catalog: Catalog, llm: Any = None, *, max_attempts: int = 2, today: date | None = None):
-        """`llm` is anything with .run(messages, **params) -> str (default: the model in settings: COPILOT_LLM_MODEL or LLM_MODEL)."""
+        """`llm` is anything with .run(messages, **params) -> str (default: the model in settings: COPILOT_MODEL)."""
         self.catalog = catalog
         self.today = today
         self.llm = llm if llm is not None else LLM(role="copilot")

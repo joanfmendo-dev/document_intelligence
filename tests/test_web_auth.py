@@ -1,11 +1,12 @@
 """The login page: who gets in, what the cookie is worth, and that nothing changes while no users are configured."""
+import json
 import time
 
 import pytest
 from fastapi.testclient import TestClient
 
-from docintel.shared.settings import s as settings
-from docintel.web import auth, create_app
+from docintel.shared.settings import s as settings, users_from
+from docintel.web import auth, create_app, passwd
 from docintel.web.__main__ import main
 from docintel.web.pipeline import Extraction
 from test_web import FIELDS
@@ -31,11 +32,11 @@ def sign_in(client, user="maria", password="correct horse", **extra):
 
 def test_the_app_does_not_start_without_users(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(settings, "USERS", {})
-    with pytest.raises(RuntimeError, match="DOCINTEL_USERS"):
+    with pytest.raises(RuntimeError, match="config.json"):
         create_app(db_path=tmp_path / "db.duckdb", uploads_dir=tmp_path / "up")
     with pytest.raises(SystemExit) as stop:  # python -m docintel.web: a clear message, and no server
         main([])
-    assert "DOCINTEL_USERS" in str(stop.value) and "docintel.web.passwd" in str(stop.value)
+    assert "USERS" in str(stop.value) and "docintel.web.passwd" in str(stop.value)
 
 
 def test_users_come_from_the_settings_by_default(tmp_path, monkeypatch):
@@ -149,3 +150,33 @@ def test_passwords_are_stored_salted_and_checked():
 def test_a_web_page_sets_the_cookie_secure_over_https(app):
     with TestClient(app, base_url="https://testserver") as c:
         assert "secure" in sign_in(c).headers["set-cookie"].lower()
+
+
+def test_users_come_from_the_config_and_the_variable():
+    config = {"users": [{"username": "maria", "hash": "aa$bb"}, {"username": "luis", "hash": "cc$dd"}]}
+    assert users_from({}) == {} and users_from(config) == {"maria": "aa$bb", "luis": "cc$dd"}
+    assert users_from(config, "luis:new$hash, ana:ee$ff") == {"maria": "aa$bb", "luis": "new$hash", "ana": "ee$ff"}  # the variable wins
+
+
+def test_the_password_script_creates_the_config_and_saves_or_replaces_a_user(tmp_path, monkeypatch, capsys):
+    file = tmp_path / "config.json"
+    monkeypatch.setattr(passwd, "CONFIG_FILE", str(file))
+    answers = iter(["one", "one", "two", "two", "other", "other"])
+    monkeypatch.setattr(passwd.getpass, "getpass", lambda prompt: next(answers))
+    passwd.main(["maria"])
+    config = json.loads(file.read_text())
+    assert list(config) == ["users", "models"] and config["models"]["extraction_llm_model"] == {"model": "ollama_chat/gemma4:e2b", "api_key": "", "base_url": ""}
+    assert set(config["models"]) == {"extraction_llm_model", "vlm_model", "embedding_model", "copilot_model", "judge_model"}
+    config["models"]["judge_model"].update(model="openai/gpt-4o-mini", api_key="sk-test")  # the person edits the file in between
+    file.write_text(json.dumps(config))
+    passwd.main(["luis"])
+    passwd.main(["maria"])  # a new password for maria replaces her entry
+    config = json.loads(file.read_text())
+    assert [u["username"] for u in config["users"]] == ["luis", "maria"] and list(config) == ["users", "models"]
+    assert config["models"]["judge_model"]["api_key"] == "sk-test"  # nothing else was touched
+    maria = config["users"][1]["hash"]
+    assert auth.check_password("other", maria) and not auth.check_password("one", maria)
+    assert f"USERS: maria:{maria}" in capsys.readouterr().out
+    for bad in ("a:b", "a,b", ""):
+        with pytest.raises(SystemExit):
+            passwd.main([bad])

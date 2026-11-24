@@ -12,7 +12,7 @@ Runs, in order, and writes `local_checks/report.md` (what to read) and `local_ch
 
 The database is COPIED first (`local_checks/work.duckdb`); your file is only changed with --in-place. A step that fails does not stop the
 others unless they depend on it. Choose steps with --steps (e.g. --steps models embeddings). The judge is used only on the synthetic
-golden set and only when a key is configured (DOCINTEL_JUDGE_API_KEY, or OPENAI_API_KEY / ANTHROPIC_API_KEY); --no-judge turns it off.
+golden set and only when a key is configured (JUDGE_API_KEY, or OPENAI_API_KEY / ANTHROPIC_API_KEY); --no-judge turns it off.
 """
 from __future__ import annotations
 
@@ -166,7 +166,7 @@ def environment(report: Report) -> None:
         except metadata.PackageNotFoundError:
             versions.append(f"{pkg} (not installed)")
     report.add(Check("environment", "INFO", f"python {sys.version.split()[0]}; " + ", ".join(versions), [
-        f"text model       {s.role('copilot')['model']}", f"embedding model  {s.EMBEDDING_MODEL}",
+        f"copilot model     {s.COPILOT_MODEL}", f"extraction model  {s.EXTRACTION_LLM_MODEL}", f"embedding model  {s.EMBEDDING_MODEL}",
         f"judge model      {s.JUDGE_MODEL}", f"semantic threshold {s.SEMANTIC_MIN_SIMILARITY}", f"ollama num_ctx   {s.OLLAMA_NUM_CTX}"]))
 
 
@@ -308,7 +308,7 @@ def check_semantic(report: Report, db_path: Path, embedder: Any, llm: Any) -> No
             lines.append(f"{q:<32} {bands[0]:>6} {bands[1]:>6} {bands[2]:>6} {bands[3]:>6} {kept:>5}  {top}")
         lines += ["", "Counts are capped at SEMANTIC_TOP_K per probe. 'kept' is what the current settings return: scores >= the threshold",
                   f"and within {margin} of the best score. Choose the threshold where the top hits stop being relevant,",
-                  "then set DOCINTEL_SEMANTIC_MIN_SIMILARITY (and DOCINTEL_SEMANTIC_RELATIVE_MARGIN). Hand-label M01-M03 of the golden set to measure it properly."]
+                  "then set SEMANTIC_MIN_SIMILARITY (and SEMANTIC_RELATIVE_MARGIN). Hand-label M01-M03 of the golden set to measure it properly."]
         report.add(Check("semantic: scores", "INFO", f"current threshold {saved}, margin {margin}", lines))
     except Exception as exc:
         report.add(Check("semantic: scores", "FAIL", f"{type(exc).__name__}: {exc}"))
@@ -421,7 +421,7 @@ def judge_configured() -> bool:
 def run(argv: list[str] | None = None, *, llm: Any = None, embedder: Any = None, judge_llm: Any = None) -> Report:
     """Run the checks. `llm`, `embedder` and `judge_llm` replace the real models (used by the tests of this module)."""
     ap = argparse.ArgumentParser(description="Checks with the real models; see the module docstring.")
-    ap.add_argument("--db", default=s.DB_PATH, help="the DuckDB file (default: DOCINTEL_DB_PATH)")
+    ap.add_argument("--db", default=s.DB_PATH, help="the DuckDB file (default: DB_PATH)")
     ap.add_argument("--out", default="local_checks", help="folder for the report and the working copy")
     ap.add_argument("--steps", nargs="+", choices=STEPS, default=list(STEPS))
     ap.add_argument("--in-place", action="store_true", help="create the vectors in --db itself instead of in a copy")

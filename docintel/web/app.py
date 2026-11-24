@@ -35,7 +35,7 @@ def create_app(*, db_path=None, uploads_dir=None, pipeline: Callable | None = No
     (path, on_step) -> Extraction, and is swapped in tests so they need neither OCR nor a model.
     `copilot_llm` and `embedder` replace the language and embedding models (tests); `catalog_path` is the copilot's catalog file,
     which only this app writes (by default next to the database). `users` ({name: hash}) are the people who may sign in;
-    by default they come from DOCINTEL_USERS and the app does not start without them. `users={}` switches the sign-in off (tests only)."""
+    by default they come from USERS and the app does not start without them. `users={}` switches the sign-in off (tests only)."""
     site = Site(db_path=db_path, uploads_dir=uploads_dir, pipeline=pipeline, max_upload_mb=max_upload_mb,
                 catalog_path=catalog_path, copilot_llm=copilot_llm, embedder=embedder, users=users)
 

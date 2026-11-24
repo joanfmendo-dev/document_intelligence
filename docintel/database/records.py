@@ -97,7 +97,7 @@ def _check(fields: Any) -> None:
 
 class RecordDB:
     def __init__(self, path: str | Path | None = None, *, embedder: Embedder | None = None):
-        """Open (and create, if needed) the DuckDB file at `path` (default: DOCINTEL_DB_PATH).
+        """Open (and create, if needed) the DuckDB file at `path` (default: DB_PATH).
         Use ":memory:" for a throwaway database. DuckDB lets one process open the file for writing at a time.
         `embedder` is the client that creates the vectors (default: the model in docintel.shared.settings, created on first use)."""
         self.path = str(path or s.DB_PATH)
