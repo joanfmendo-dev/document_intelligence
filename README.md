@@ -250,7 +250,7 @@ El **catálogo** (`catalog.yaml`: campos, roles, valores con conteos) lo genera 
 **Controles del plan:** si la pregunta nombra un valor del catálogo (una prueba de laboratorio, un departamento…) que el plan no usa, el agente vuelve a preguntar al modelo una vez, mostrándole su propia respuesta y la observación; si aun así falta, la respuesta lo advierte. El validador avisa de lo que ignora (un `field` en un conteo, claves de otra intención) y de un conteo sin ninguna condición ("covers all the records"). Todo queda en `a.trace` (paso `check`).
 Un `group_by` imposible (p. ej. por prueba de laboratorio) no genera una pregunta: se da la cifra total y se avisa.
 **Trazabilidad:** `a.trace` es la lista ordenada de pasos (llamadas al LLM con lo enviado y la respuesta cruda, plan, validación con avisos, cada sentencia SQL con sus parámetros y filas devueltas, embedding de la consulta); `print(a.explain())` la muestra legible, y la página `/copilot` la muestra en "How this answer was obtained".
-Búsqueda semántica: umbral `SEMANTIC_MIN_SIMILARITY=0.6` (sin calibrar) más un corte relativo `SEMANTIC_RELATIVE_MARGIN=0.05` (`SEMANTIC_RELATIVE_MARGIN`): solo se muestran los resultados a menos de 0.05 del mejor, porque los puntajes de nomic-embed-text están comprimidos (0.5–0.75) y el umbral solo no separa. La traza muestra cuántos pasaron cada filtro (paso `semantic_filter`).
+Búsqueda semántica: umbral `SEMANTIC_MIN_SIMILARITY=0.4` (calibrado con `text-embedding-3-small`, cuyos mejores resultados puntúan 0,4–0,55; con nomic-embed-text haría falta ~0,6) más un corte relativo `SEMANTIC_RELATIVE_MARGIN=0.05` (`SEMANTIC_RELATIVE_MARGIN`): solo se muestran los resultados a menos de 0.05 del mejor, porque los puntajes de nomic-embed-text están comprimidos (0.5–0.75) y el umbral solo no separa. La traza muestra cuántos pasaron cada filtro (paso `semantic_filter`).
 **Correcciones tras las primeras corridas con modelos reales:** el prompt da la fecha de hoy y exige el token para "this year"/"last month" (un año literal en el ejemplo se copiaba); se aceptan `{"last_n_days": 30}` y valores copiados con su conteo (`"Cardiology (54)"`); un nombre de prueba exacto incluye sus variantes (`Glucose` → `Glucose (point-of-care)`, con aviso); un id parcial (`0007`) abre el registro `SYNUS-2026-0007`, y si encaja con varios pregunta cuál.
 
 ## 9. Evaluación
@@ -325,3 +325,11 @@ Los 544 códigos válidos del Excel coinciden con la ontología en capítulo y c
 "Acute lower-extremity DVT" aparece con A69, I83.9 o I95.9 (la trombosis venosa profunda es I80), "Hypertensive urgency" con I70.9 (aterosclerosis)
 y "Non-purulent cellulitis…" con T84 o S06.0 (complicaciones de prótesis, traumatismo craneal). 30 de los 37 diagnósticos distintos tienen más de un
 código. `mode="missing"` no los corrige (son códigos válidos); revísalos, o usa `mode="all"` (`--all`) una vez que midas la calidad de tu modelo.
+
+## En un servidor (Azure Container Apps)
+
+- `ALLOWED_HOSTS` (nombres que atiende la app, o `*`) es lo que permite escuchar fuera de este equipo (`--host 0.0.0.0`). Detrás del proxy, la cookie sale `Secure` porque se respeta `X-Forwarded-Proto`.
+- `BLOB_CONNECTION_STRING` (y `BLOB_CONTAINER`, por defecto `docbase`) activa la copia maestra en Blob Storage: al arrancar se descarga el `.duckdb` (y su catálogo) y tras cada cambio se vuelve a subir. Para reemplazar los datos, sube un `.duckdb` nuevo al contenedor y reinicia la app. Una sola réplica. Requiere `pip install ".[azure]"`.
+- `MAX_UPLOAD_MB` y `MAX_PAGES` limitan las cargas (los PDF con más páginas se rechazan antes del OCR).
+- `GET /healthz` responde `ok` sin iniciar sesión.
+- `docker build -t docbase .` construye la imagen, sin secretos: `USERS`, `SECRET_KEY`, las `*_API_KEY` y `BLOB_CONNECTION_STRING` llegan como variables de entorno.

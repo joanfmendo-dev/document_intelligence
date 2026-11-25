@@ -9,6 +9,7 @@ from ..database.data_transformation import ICD10
 from ..extraction.auto import extract_auto
 from ..extraction.fields import find_ungrounded, get_fields
 from ..database.records import record_template
+from ..shared.settings import s
 
 
 @dataclass
@@ -23,6 +24,11 @@ def run(path: Path, on_step: Callable[[str], None]) -> Extraction:
     """extract_auto -> get_fields -> ICD10.code_fields. `on_step` is told 'reading', 'extracting' and 'coding'.
     A failure of the coding step does not lose the extraction: the ICD-10 fields stay blank, with a notice."""
     on_step("reading")
+    if s.MAX_PAGES and path.suffix.lower() == ".pdf":
+        import pypdfium2
+        pages = len(pypdfium2.PdfDocument(path))
+        if pages > s.MAX_PAGES:
+            raise ValueError(f"The PDF has {pages} pages; the limit is {s.MAX_PAGES}.")
     document = extract_auto(path)
     if not document["text"].strip():
         raise ValueError("No text was found in the document. Is it blank, or is the image unreadable?")

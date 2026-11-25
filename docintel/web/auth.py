@@ -16,7 +16,7 @@ from fastapi.responses import PlainTextResponse, RedirectResponse
 from starlette.requests import Request
 
 COOKIE = "docbase_session"
-OPEN_PATHS = ("/login", "/static/")  # reachable without signing in
+OPEN_PATHS = ("/login", "/static/", "/healthz")  # reachable without signing in
 MAX_FAILURES, LOCK_SECONDS = 5, 300  # 5 wrong passwords for one user lock that user for 5 minutes
 
 

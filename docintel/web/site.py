@@ -17,6 +17,7 @@ from ..shared.embeddings import EmbeddingError
 from ..shared.settings import s
 from . import forms, pipeline as default_pipeline
 from .auth import NO_USERS, Auth
+from .blob import BlobCopy
 from .chat import ChatStore
 from .jobs import Jobs
 from .storage import UploadStore
@@ -43,9 +44,11 @@ def found(value, what: str):
 
 class Site:
     def __init__(self, *, db_path=None, uploads_dir=None, pipeline: Callable | None = None, max_upload_mb: int | None = None,
-                 catalog_path=None, copilot_llm=None, embedder=None, users: dict[str, str] | None = None):
+                 catalog_path=None, copilot_llm=None, embedder=None, users: dict[str, str] | None = None, blob=None):
         self.db_path = str(db_path or s.DB_PATH)
         self.catalog_file = Path(catalog_path) if catalog_path else Path(self.db_path).with_suffix(".catalog.yaml")
+        self.blob = blob or (BlobCopy.from_connection_string(s.BLOB_CONNECTION_STRING, s.BLOB_CONTAINER, [self.db_path, self.catalog_file])
+                             if s.BLOB_CONNECTION_STRING else None)
         self.max_mb = max_upload_mb or s.MAX_UPLOAD_MB
         self.uploads = UploadStore(uploads_dir or s.UPLOADS_DIR)
         self.jobs = Jobs(pipeline or default_pipeline.run)
@@ -83,3 +86,9 @@ class Site:
             (previous.refresh(db.con) if previous else Catalog.build(db.con)).to_yaml(file)
         except Exception as exc:  # never lose a save over the catalog
             log.warning("could not update the catalog: %s", exc)
+        if self.blob:  # the master copy is in Blob Storage: a save that cannot be uploaded is logged, not lost (it is still on the disk)
+            try:
+                db.con.execute("CHECKPOINT")
+                self.blob.push()
+            except Exception as exc:
+                log.error("could not upload the database to Blob Storage: %s", exc)

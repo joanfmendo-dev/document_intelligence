@@ -86,7 +86,7 @@ class Settings:
     COPILOT_PAGE_SIZE = 25                # rows shown per answer
     SEMANTIC_TOP_K = 50                   # most candidates a semantic search returns
     SEMANTIC_RELATIVE_MARGIN = float(os.getenv("SEMANTIC_RELATIVE_MARGIN", "0.05"))  # keep hits within this of the best score
-    SEMANTIC_MIN_SIMILARITY = float(os.getenv("SEMANTIC_MIN_SIMILARITY", "0.6"))  # to calibrate with the golden set
+    SEMANTIC_MIN_SIMILARITY = float(os.getenv("SEMANTIC_MIN_SIMILARITY", "0.4"))  # calibrated for text-embedding-3-small (best hits 0.4-0.55); nomic-embed-text needs ~0.6
 
     # evaluation (docintel.evaluation): the judge is a commercial model, used offline and only on synthetic data
     JUDGE_MODEL = model_setting("judge_model", "model", "JUDGE_MODEL", DEFAULT_MODELS["judge_model"])
@@ -104,6 +104,13 @@ class Settings:
     # saved or the upload cancelled), and the largest upload accepted
     UPLOADS_DIR = os.getenv("UPLOADS_DIR", "uploads")
     MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "25"))
+    MAX_PAGES = int(os.getenv("MAX_PAGES", "0"))  # PDFs with more pages are refused before the OCR; 0 = no limit
+
+    # on a server: ALLOWED_HOSTS is the comma-separated list of names the app answers to ("*" = any); setting it is what lets the app
+    # listen beyond this computer. BLOB_CONNECTION_STRING keeps the master copy of the database in Azure Blob Storage (see web/blob.py).
+    ALLOWED_HOSTS = [h.strip() for h in os.getenv("ALLOWED_HOSTS", "").split(",") if h.strip()]
+    BLOB_CONNECTION_STRING = os.getenv("BLOB_CONNECTION_STRING", "")
+    BLOB_CONTAINER = os.getenv("BLOB_CONTAINER", "docbase")
 
     # sign-in: the "users" of config.json (`python -m docintel.web.passwd` writes them) plus USERS ("name:hash,name2:hash2", for
     # servers where a secret is easier than a file); the app does not start without users.
