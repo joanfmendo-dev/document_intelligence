@@ -14,7 +14,7 @@ import json
 import re
 from typing import Any
 
-from ..shared.llm import LLM
+from ..shared.llm import LLM, LLMError
 
 FIDELITY_SYSTEM = """You check whether a text shown to a user faithfully represents the result of a database query.
 
@@ -67,11 +67,17 @@ class Judge:
         """`llm` is anything with .run(messages, **params) -> str; default: the commercial model in settings (JUDGE_MODEL)."""
         self.llm = llm if llm is not None else LLM(role="judge")
         self.retries = retries
+        self.errors: list[str] = []  # calls that failed (a timeout, a refusal): that case is not graded, the evaluation goes on
 
     def _score(self, system: str, user: str) -> int | None:
         messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
         for _ in range(self.retries + 1):
-            found = re.findall(r"SCORE:\s*([01])\b", self.llm.run(messages, temperature=0, max_tokens=300))
+            try:  # no max_tokens: a model that reasons (gpt-5) spends them thinking first, and a cap leaves it with an empty reply
+                reply = self.llm.run(messages, temperature=0)
+            except LLMError as exc:
+                self.errors.append(str(exc))
+                continue
+            found = re.findall(r"SCORE:\s*([01])\b", reply)
             if found:
                 return int(found[-1])
         return None

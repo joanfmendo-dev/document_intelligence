@@ -90,6 +90,8 @@ class LLM:
         if is_ollama(self.model):  # defaults that only make sense for Ollama
             params.setdefault("num_ctx", s.OLLAMA_NUM_CTX)
             params.setdefault("keep_alive", s.OLLAMA_KEEP_ALIVE)
+        else:  # a cloud API fails now and then (a connection that times out, 429, 5xx): litellm tries again, waiting a little between attempts
+            params.setdefault("num_retries", 2)
         system = [{"role": "system", "content": self.system}] if self.system else []
         try:
             resp = litellm.completion(

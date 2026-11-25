@@ -12,6 +12,7 @@ that it builds itself from a validated plan.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,8 @@ from .executor import Executor
 from .plan import Query
 from .planner import Planner, PlannerError
 from .render import Answer, render
+
+log = logging.getLogger("docintel")
 from .validator import validate
 
 MODEL_DOWN = "The assistant's language model is not available right now, so I could not read your question. Please try again in a moment."
@@ -72,7 +75,8 @@ class Copilot:
             answer = render(Query("clarify", message=NOT_UNDERSTOOD))
             answer.trace = self._llm_trace()
             return answer
-        except LLMError:
+        except LLMError as exc:
+            log.warning("The copilot's model could not be called: %s", exc)  # the person is told only that it is down; the log says why
             return Answer("error", text=MODEL_DOWN, summary=MODEL_DOWN, trace=self._llm_trace())
         answer = self.answer_plan(plan, page)
         missing = self._missing(question, plan) if answer.query is not None and answer.query.intent in ("search", "aggregate") else []

@@ -11,6 +11,7 @@ from docintel.copilot.plan import INTENTS
 from docintel.database import RecordDB
 from docintel.evaluation import Golden, GoldenCase, Judge, calibrate, evaluate, execution_verdict, load_golden, wilson
 from docintel.evaluation.runner import stability
+from docintel.shared import LLMError
 from docintel.evaluation.execution import compare_aggregate, compare_list, ids_digest, values_equal
 from docintel.evaluation.judge import add_claim, corrupt_number, judge_view
 
@@ -76,10 +77,11 @@ class ScriptedJudge:
     """A fake judge model. `answers` are replies in order; the last repeats."""
 
     def __init__(self, *answers):
-        self.answers, self.calls = list(answers), []
+        self.answers, self.calls, self.params = list(answers), [], []
 
     def run(self, messages, **params):
         self.calls.append(messages)
+        self.params.append(params)
         return self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
 
 
@@ -91,6 +93,25 @@ def test_the_judge_reads_the_last_score_and_retries_an_unreadable_reply():
     llm = ScriptedJudge("no score at all")
     assert Judge(llm).fidelity("{}", "x") is None and len(llm.calls) == 2  # one retry, then None (not a failure)
     assert Judge(ScriptedJudge("SCORE: 7"), retries=0).fidelity("{}", "x") is None
+
+
+class DownJudge:
+    """A judge model whose every call fails, as a connection that times out does."""
+    def run(self, messages, **params):
+        raise LLMError("Timeout: connection timed out")
+
+
+def test_a_judge_call_that_fails_leaves_that_case_ungraded_instead_of_stopping_the_evaluation(db):
+    judge = Judge(DownJudge())
+    assert judge.fidelity("{}", "x") is None and len(judge.errors) == 2 and "Timeout" in judge.errors[0]  # tried twice, did not raise
+    report = evaluate(copilot(db), golden(), Judge(DownJudge()), only=["A", "B"])                         # every case still gets its level 1
+    assert [c.level1 for c in report.cases] == ["exact", "exact"] and all(c.judge_fidelity is None and not c.passed for c in report.cases)
+
+
+def test_the_judge_does_not_cap_its_answer_because_a_model_that_reasons_would_run_out_of_tokens():
+    llm = ScriptedJudge("SCORE: 1")
+    Judge(llm).fidelity("{}", "x")
+    assert "max_tokens" not in llm.params[0]
 
 
 def test_each_criterion_gets_its_own_prompt_with_only_what_it_needs():

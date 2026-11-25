@@ -57,3 +57,18 @@ def test_image_content_is_openai_style_data_url():
     parts = image_content("look", [Image.new("RGB", (10, 10))])
     assert parts[0] == {"type": "text", "text": "look"}
     assert parts[1]["image_url"]["url"].startswith("data:image/png;base64,")
+
+
+def test_a_cloud_model_is_retried_but_a_local_one_is_not(monkeypatch):
+    import litellm
+
+    seen = {}
+
+    def fake(**kwargs):
+        seen[kwargs["model"]] = kwargs
+        raise RuntimeError("stop here")
+    monkeypatch.setattr(litellm, "completion", fake)
+    for model in ("azure_ai/gpt-5-nano-1", "ollama_chat/gemma4:e2b"):
+        with pytest.raises(LLMError):
+            LLM(model=model).complete([{"role": "user", "content": "hi"}])
+    assert seen["azure_ai/gpt-5-nano-1"]["num_retries"] == 2 and "num_retries" not in seen["ollama_chat/gemma4:e2b"]

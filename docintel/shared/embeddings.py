@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 from typing import Sequence
 
-from .llm import LLMError
+from .llm import LLMError, is_ollama
 from .settings import s
 
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
@@ -46,8 +46,10 @@ class Embedder:
                                      api_base=self.base_url or None, timeout=self.timeout)
             vectors = [list(map(float, item["embedding"])) for item in resp.data]
         except Exception as exc:
-            hint = " Is the server running, and is the model pulled (ollama pull nomic-embed-text)?" \
-                if type(exc).__name__ in {"APIConnectionError", "NotFoundError", "BadRequestError"} else ""
+            hint = ""
+            if type(exc).__name__ in {"APIConnectionError", "NotFoundError", "BadRequestError"}:
+                hint = (f" Is the server running, and is the model pulled (ollama pull {self.model.split('/', 1)[-1]})?" if is_ollama(self.model) else
+                        " Check the model name, base_url and api_key (Azure: the model is azure/<the name of the deployment>, and base_url the resource's address).")
             raise EmbeddingError(f"embedding call to '{self.model}' failed: {type(exc).__name__}: {exc}.{hint}") from exc
         if len(vectors) != len(texts) or any(not v for v in vectors):
             raise EmbeddingError(f"'{self.model}' returned {len(vectors)} vectors for {len(texts)} texts")

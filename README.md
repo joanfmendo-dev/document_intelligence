@@ -89,7 +89,7 @@ a partir de `final_diagnosis` (y `chief_complaint`); la validez del código, su 
 `simple-icd-10`, sin red), así que los tres campos nunca se contradicen y un código inventado se detecta. Si el modelo no da un código válido (se le
 corrige una vez) el resultado es **vacío**, nunca un código de relleno.
 ```python
-from docintel.data_transformation import ICD10
+from docintel.database import ICD10
 
 ICD10.resolve("I21.9")                                  # sin modelo: valida y busca capítulo y categoría
 icd = ICD10()                                           # usa el modelo de settings; ICD10(llm=...) para otro
@@ -108,6 +108,9 @@ icd.update_icd10("medical_records.xlsx", "medical_records.xlsx", mode="all")    
   Excel le faltan las tres columnas, se agregan al final.
 - Si el modelo falla a la mitad, lo ya codificado se guarda antes de lanzar el error: repetir con `mode="missing"` continúa donde quedó.
 - `dry_run=True` solo cuenta lo que se actualizaría: no escribe ni llama al modelo.
+- La función **devuelve un informe** (`print(icd.update_icd10(...))` lo muestra): `coded` es lo que codificó el modelo y `unresolved` lo que dejó como estaba.
+  Si quedan registros sin codificar, además emite un aviso con la última respuesta del modelo. La llamada no limita `max_tokens` a propósito: un modelo
+  que "piensa" (Gemma 4, Qwen 3) gasta los tokens razonando y, con un tope, devuelve la respuesta vacía.
 
 **Crear la base DuckDB desde el Excel, actualizando el ICD-10 en el camino**:
 ```python
@@ -123,7 +126,7 @@ Sin `icd_output` el Excel original no se modifica (el Excel actualizado solo se 
 **Ejemplo: actualizar los valores ICD-10 de la base de datos** (los registros ya guardados en el `.duckdb`):
 ```python
 from docintel import RecordDB
-from docintel.data_transformation import ICD10
+from docintel.database import ICD10
 
 with RecordDB("medical_records.duckdb") as db:
     icd = ICD10()
@@ -157,7 +160,7 @@ Los modelos se nombran al estilo litellm; cambiar de proveedor es cambiar una ca
 }
 ```
 
-Cada tarea tiene su modelo, clave y dirección: extraer campos de los documentos, transcribir imágenes (VLM), los embeddings, el plan del copiloto y el juez de la evaluación pueden ser modelos distintos. Los que falten en el archivo usan el valor de arriba. Para usar OpenAI, Claude, etc. basta cambiar `model` y poner la `api_key` (p. ej. `"openai/gpt-4o-mini"`); Azure OpenAI: `"azure/<nombre-del-despliegue>"`, la `api_key` y en `base_url` la dirección del recurso (la versión de la API es la de litellm, o la variable `AZURE_API_VERSION`). Un archivo con una llave de modelo desconocida (p. ej. el antiguo `llm_model`) o con usuarios sin `username` y `hash` da un error claro en vez de ignorarse. Orden de prioridad: **variable de entorno > `config.json` > valor por defecto**. Las variables se llaman igual que el ajuste de `shared/settings.py` (sin prefijo): son útiles en un servidor, donde un secreto es mejor que un archivo.
+Cada tarea tiene su modelo, clave y dirección: extraer campos de los documentos, transcribir imágenes (VLM), los embeddings, el plan del copiloto y el juez de la evaluación pueden ser modelos distintos. Los que falten en el archivo usan el valor de arriba. Para usar OpenAI, Claude, etc. basta cambiar `model` y poner la `api_key` (p. ej. `"openai/gpt-4o-mini"`); Azure OpenAI: `"azure/<nombre-del-despliegue>"`, la `api_key` y en `base_url` la dirección del recurso (la versión de la API es la de litellm, o la variable `AZURE_API_VERSION`). El planner del copiloto pide la respuesta como JSON Schema; con Ollama el esquema es **estricto** (Ollama lo hace cumplir mientras escribe), pero OpenAI y Azure OpenAI solo aceptan en modo estricto un subconjunto más reducido del que un plan no cabe, así que con ellos se envía como guía (`strict: false`) y el plan se valida después. Si el modelo falla, la pantalla solo dice que no está disponible; **el motivo real queda en el log del servidor** (`The copilot's model could not be called: ...`). Los modelos en la nube se reintentan 2 veces ante fallos de conexión (`num_retries`). Si una llamada del juez falla igualmente, ese caso queda sin calificar y `local_checks` lo informa como WARN ("judge: failed calls"), en vez de abortar toda la evaluación. Las llamadas del planner, del juez y de ICD-10 no limitan `max_tokens` a propósito: un modelo que razona (gpt-5, Gemma 4) gasta esos tokens pensando y, con un tope, devuelve la respuesta vacía. Un archivo con una llave de modelo desconocida (p. ej. el antiguo `llm_model`) o con usuarios sin `username` y `hash` da un error claro en vez de ignorarse. Orden de prioridad: **variable de entorno > `config.json` > valor por defecto**. Las variables se llaman igual que el ajuste de `shared/settings.py` (sin prefijo): son útiles en un servidor, donde un secreto es mejor que un archivo.
 
 | Variable de entorno | Por defecto |
 |---|---|

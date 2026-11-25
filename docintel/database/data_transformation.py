@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, NamedTuple
@@ -71,6 +72,7 @@ Rules:
 
     def __init__(self, llm: LLM | None = None):
         self._llm = llm
+        self.last_answer = ""  # the model's latest reply, to say what went wrong when it could not code
 
     @property
     def llm(self) -> LLM:
@@ -116,7 +118,8 @@ Rules:
             return None
         messages = [{"role": "user", "content": f"final_diagnosis: {diagnosis}\nchief_complaint: {complaint}"}]
         for _ in range(2):
-            answer = self.llm.run(messages, temperature=0, max_tokens=60, response_format=self._SCHEMA)
+            # no max_tokens: a model that thinks before answering (Gemma 4, Qwen 3) spends the tokens first, and a cap leaves it with an empty reply
+            answer = self.last_answer = self.llm.run(messages, temperature=0, response_format=self._SCHEMA)
             proposed = self._proposed(answer)
             if coding := self.resolve(proposed, prefix_fallback=True):
                 return coding
@@ -180,6 +183,9 @@ Rules:
                 report.unresolved += 1
             if progress and (done % 25 == 0 or done == len(todo)):
                 progress(f"  {done}/{len(todo)} records processed")
+        if report.unresolved:  # the rows stay as they were: say so, or a run in which the model coded nothing looks like a run that did nothing
+            warnings.warn(f"{report.unresolved} of {len(todo)} records could not be coded and were left as they were. The model's last reply was "
+                          f"{self.last_answer!r}.", stacklevel=2)
         return report
 
     def _check_mode(self, mode: str) -> None:

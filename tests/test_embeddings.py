@@ -243,3 +243,18 @@ def test_a_wrong_number_of_vectors_is_an_error(monkeypatch):
     monkeypatch.setattr(litellm, "embedding", lambda **kw: SimpleNamespace(data=[]))
     with pytest.raises(EmbeddingError, match="0 vectors for 1 texts"):
         Embedder().embed_query("x")
+
+
+@pytest.mark.parametrize("model, hint", [("ollama/nomic-embed-text", "ollama pull nomic-embed-text"), ("azure/my-deployment", "name of the deployment")])
+def test_a_failed_call_suggests_what_to_check_for_that_provider(model, hint):
+    class NotFoundError(Exception):
+        pass
+    def fail(**kwargs):
+        raise NotFoundError("no such deployment")
+    import litellm
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(litellm, "embedding", fail)
+        with pytest.raises(EmbeddingError) as info:
+            Embedder(model=model).embed_query("x")
+    message = str(info.value)
+    assert hint in message and ("ollama pull" in message) == model.startswith("ollama")

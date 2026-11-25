@@ -10,7 +10,7 @@ import time
 from datetime import date
 from typing import Any
 
-from ..shared.llm import LLM, LLMError
+from ..shared.llm import LLM, LLMError, is_ollama
 from .catalog import Catalog
 from .plan import PlanFormatError, parse_plan, plan_schema
 
@@ -122,7 +122,11 @@ class Planner:
         if correction:  # (the plan the model gave, what is wrong with it): ask again with its own answer and the remark in view
             messages = messages + [{"role": "assistant", "content": json.dumps(correction[0], ensure_ascii=False)},
                                    {"role": "user", "content": correction[1]}]
-        response_format = {"type": "json_schema", "json_schema": {"name": "plan", "schema": plan_schema(self.catalog), "strict": True}}
+        # Ollama enforces the schema while the model writes, so ours can be as loose as the plan needs. OpenAI and Azure OpenAI "strict" mode accepts only
+        # a narrower JSON Schema (every object closed, every key required) that a plan cannot be written in: there the schema is a guide and
+        # parse_plan / validate check the plan afterwards.
+        strict = is_ollama(getattr(self.llm, "model", ""))
+        response_format = {"type": "json_schema", "json_schema": {"name": "plan", "schema": plan_schema(self.catalog), "strict": strict}}
         last = ""
         if not correction:
             self.last_attempts = []  # a correction adds to the attempts of the same question
@@ -131,7 +135,8 @@ class Planner:
             self.last_attempts.append(attempt)
             started = time.perf_counter()
             try:
-                reply = self.llm.run(messages, temperature=0, max_tokens=700, response_format=response_format)
+                # no max_tokens: a model that reasons (gpt-5, Gemma 4) spends tokens thinking first, and a cap leaves it with an empty reply
+                reply = self.llm.run(messages, temperature=0, response_format=response_format)
             except Exception as exc:
                 attempt.update(error=f"{type(exc).__name__}: {exc}", seconds=round(time.perf_counter() - started, 2))
                 raise

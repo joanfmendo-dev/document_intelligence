@@ -573,7 +573,8 @@ def test_the_planner_sends_the_catalog_and_the_question(catalog):
     messages, params = llm.calls[0]
     assert messages[0]["role"] == "system" and "Cardiology (5)" in messages[0]["content"] and "never write SQL" in messages[0]["content"]
     assert messages[1] == {"role": "user", "content": "Question: What can you do?"}
-    assert params["temperature"] == 0 and params["response_format"]["json_schema"]["strict"] is True
+    assert params["temperature"] == 0 and params["response_format"]["json_schema"]["strict"] is False  # the fake model is not an Ollama one
+    assert "max_tokens" not in params
     assert "department" in json.dumps(params["response_format"]["json_schema"]["schema"])
 
 
@@ -620,9 +621,18 @@ def test_a_misspelling_is_asked_about_not_guessed(db):
     assert a.kind == "clarify" and a.suggestions == ["Cardiology"] and a.result is None
 
 
-def test_when_the_language_model_is_down_the_user_is_told(db):
+def test_when_the_language_model_is_down_the_user_is_told(db, caplog):
     a = cop(db, LLMError("refused")).ask("anything")
     assert a.kind == "error" and "not available" in a.text
+    assert "refused" not in a.text and "refused" in caplog.text  # the reason goes to the log, not to the person
+
+
+@pytest.mark.parametrize("model, strict", [("ollama_chat/gemma4:e2b", True), ("ollama/qwen3", True), ("azure_ai/gpt-5-nano-1", False), ("openai/gpt-4.1-mini", False)])
+def test_the_schema_is_strict_only_where_the_server_can_enforce_it(catalog, model, strict):
+    llm = FakeLLM({"intent": "help"})
+    llm.model = model
+    Planner(catalog, llm).plan("What can you do?")
+    assert llm.calls[0][1]["response_format"]["json_schema"]["strict"] is strict
 
 
 def test_a_model_that_never_returns_a_plan_gives_a_polite_clarification(db):

@@ -145,6 +145,7 @@ def test_all_mode_recodes_every_row_even_the_complete_ones():
     assert rows[0]["icd10_code"] == rows[1]["icd10_code"] == "J18" and rows[2] == row("", cc="")           # nothing to code: left as it was
 
 
+@pytest.mark.filterwarnings("ignore:.*could not be coded")
 def test_a_row_the_model_cannot_code_keeps_what_it_had():
     rows = [row("odd", icd10_code="J48", icd10_chapter="0", icd10_category="0")]
     report = ICD10(FakeLLM("no idea", "no idea")).update_rows(rows, "all")
@@ -347,3 +348,15 @@ def test_an_interrupted_database_update_keeps_what_it_did(db):
     with pytest.raises(LLMError):
         ICD10(FakeLLM({"code": "J44"}, {"code": "J18"}, LLMError("down"))).update_database(db)
     assert [db.read_record(f"R-{i}")["icd10_code"] for i in range(3)] == ["J44", "J18", None]
+
+
+def test_the_answer_is_not_capped_because_a_model_that_thinks_would_run_out_of_tokens():
+    llm = FakeLLM('{"code": "J18"}')
+    assert ICD10(llm).classify("Community-acquired pneumonia", "Cough").code == "J18"
+    assert "max_tokens" not in llm.calls[0][1]
+
+
+def test_rows_left_uncoded_are_reported_with_the_models_last_reply():
+    rows = [row("odd", icd10_code="J48", icd10_chapter="0", icd10_category="0")]
+    with pytest.warns(UserWarning, match=r"1 of 1 records could not be coded.*'no idea'"):
+        ICD10(FakeLLM("no idea", "no idea")).update_rows(rows, "all")

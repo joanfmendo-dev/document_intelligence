@@ -208,7 +208,7 @@ def check_models(report: Report, embedder: Any, llm: Any, judge_llm: Any | None)
         report.add(Check("models: judge", "SKIP", "no judge key configured (or --no-judge)"))
         return
     try:
-        reply, secs = _timed(judge_llm.run, [{"role": "user", "content": "Reply with exactly: SCORE: 1"}], temperature=0, max_tokens=20)
+        reply, secs = _timed(judge_llm.run, [{"role": "user", "content": "Reply with exactly: SCORE: 1"}], temperature=0)
         report.add(Check("models: judge", "PASS" if "SCORE" in reply else "WARN", f"{secs:.1f} s; reply {reply.strip()[:40]!r}"))
     except Exception as exc:
         report.add(Check("models: judge", "FAIL", f"{type(exc).__name__}: {exc}"))
@@ -342,6 +342,8 @@ def check_planner(report: Report, db_path: Path, embedder: Any, llm: Any, judge:
         skipped = [c.id for c in golden.cases if c.id not in only]
         eval_report = evaluate(cp, golden, judge, only=only,
                                progress=lambda i, n: print(f"      case {i}/{n}", flush=True) if i % 5 == 0 or i == n else None)
+        if getattr(judge, "errors", None):
+            report.add(Check("judge: failed calls", "WARN", f"{len(judge.errors)} calls to the judge failed, so those cases are not graded; last: {judge.errors[-1][:240]}"))
     except Exception as exc:
         report.add(Check("planner: golden set", "FAIL", f"{type(exc).__name__}: {exc}"))
         return {}
