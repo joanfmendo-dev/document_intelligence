@@ -1,4 +1,4 @@
-// DocBase: the little JavaScript the pages use. Everything else works without it.
+// Medical Records: the little JavaScript the pages use. Everything else works without it.
 (() => {
   // Drag a file onto the upload zone, or pick one: it is sent right away.
   const zone = document.querySelector('[data-dropzone]');

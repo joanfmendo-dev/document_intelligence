@@ -110,7 +110,7 @@ class Settings:
     # listen beyond this computer. BLOB_CONNECTION_STRING keeps the master copy of the database in Azure Blob Storage (see web/blob.py).
     ALLOWED_HOSTS = [h.strip() for h in os.getenv("ALLOWED_HOSTS", "").split(",") if h.strip()]
     BLOB_CONNECTION_STRING = os.getenv("BLOB_CONNECTION_STRING", "")
-    BLOB_CONTAINER = os.getenv("BLOB_CONTAINER", "docbase")
+    BLOB_CONTAINER = os.getenv("BLOB_CONTAINER", "database")
 
     # sign-in: the "users" of config.json (`python -m docintel.web.passwd` writes them) plus USERS ("name:hash,name2:hash2", for
     # servers where a secret is easier than a file); the app does not start without users.

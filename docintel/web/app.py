@@ -1,4 +1,4 @@
-"""DocBase: the web prototype. Upload a document -> review the extracted fields next to it -> save them in the
+"""Medical Records: the web prototype. Upload a document -> review the extracted fields next to it -> save them in the
 database; browse, edit and delete saved records. The uploaded file is only kept while it is being reviewed.
 
     from docintel.web import create_app
@@ -49,7 +49,7 @@ def create_app(*, db_path=None, uploads_dir=None, pipeline: Callable | None = No
         yield
         site.jobs.shutdown()
 
-    app = FastAPI(title="DocBase", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    app = FastAPI(title="Medical Records", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts or s.ALLOWED_HOSTS or LOCAL_HOSTS)
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 

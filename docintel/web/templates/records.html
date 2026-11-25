@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Database · DocBase{% endblock %}
+{% block title %}Database · Medical Records{% endblock %}
 {% block main_attrs %}{{ ' inert' if confirm }}{% endblock %}
 {% block content %}
 <div class="row"><div><h1>Database</h1><p class="sub">{{ total }} record{{ 's' if total != 1 }}{% if q or d %} found{% endif %}</p></div><a class="btn pri" href="/upload">Upload document</a></div>

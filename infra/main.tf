@@ -12,7 +12,7 @@ provider "azurerm" {
 }
 
 resource "random_string" "suffix" {
-  length  = 6
+  length  = 4
   upper   = false
   special = false
 }
@@ -24,13 +24,13 @@ resource "random_password" "secret_key" {
 }
 
 resource "azurerm_resource_group" "rg" {
-  name     = "rg-docbase"
+  name     = "rg-${var.project}"
   location = var.location
 }
 
 # The master copy of the database: upload a new .duckdb to this container and restart the app to replace the data.
 resource "azurerm_storage_account" "data" {
-  name                            = "docbase${random_string.suffix.result}"
+  name                            = "st${replace(var.project, "-", "")}${random_string.suffix.result}" # 3-24 lowercase letters and digits: no hyphens; the suffix makes it unique worldwide
   resource_group_name             = azurerm_resource_group.rg.name
   location                        = azurerm_resource_group.rg.location
   account_tier                    = "Standard"
@@ -40,13 +40,13 @@ resource "azurerm_storage_account" "data" {
 }
 
 resource "azurerm_storage_container" "db" {
-  name                  = "docbase"
+  name                  = "database"
   storage_account_id    = azurerm_storage_account.data.id
   container_access_type = "private"
 }
 
 resource "azurerm_log_analytics_workspace" "logs" {
-  name                = "log-docbase"
+  name                = "log-${var.project}"
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
   sku                 = "PerGB2018"
@@ -55,7 +55,7 @@ resource "azurerm_log_analytics_workspace" "logs" {
 }
 
 resource "azurerm_container_app_environment" "env" {
-  name                       = "cae-docbase"
+  name                       = "cae-${var.project}"
   resource_group_name        = azurerm_resource_group.rg.name
   location                   = azurerm_resource_group.rg.location
   log_analytics_workspace_id = azurerm_log_analytics_workspace.logs.id
@@ -94,7 +94,7 @@ locals {
 }
 
 resource "azurerm_container_app" "app" {
-  name                         = "docbase"
+  name                         = "ca-${var.project}"
   resource_group_name          = azurerm_resource_group.rg.name
   container_app_environment_id = azurerm_container_app_environment.env.id
   revision_mode                = "Single"
@@ -112,7 +112,7 @@ resource "azurerm_container_app" "app" {
     max_replicas = 1 # one instance only: two would overwrite each other's copy of the database
 
     container {
-      name   = "docbase"
+      name   = var.project
       image  = var.image
       cpu    = 1
       memory = "2Gi" # the OCR needs room
@@ -154,7 +154,7 @@ resource "azurerm_container_app" "app" {
 }
 
 resource "azurerm_consumption_budget_resource_group" "alert" {
-  name              = "docbase-budget"
+  name              = "budget-${var.project}"
   resource_group_id = azurerm_resource_group.rg.id
   amount            = var.budget_usd
   time_grain        = "Monthly"

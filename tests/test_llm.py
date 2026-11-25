@@ -72,3 +72,7 @@ def test_a_cloud_model_is_retried_but_a_local_one_is_not(monkeypatch):
         with pytest.raises(LLMError):
             LLM(model=model).complete([{"role": "user", "content": "hi"}])
     assert seen["azure_ai/gpt-5-nano-1"]["num_retries"] == 2 and "num_retries" not in seen["ollama_chat/gemma4:e2b"]
+
+
+def test_tenacity_is_installed_because_litellm_needs_it_for_num_retries():
+    import tenacity  # noqa: F401  (a missing package makes every cloud call fail: it is a dependency in pyproject.toml)

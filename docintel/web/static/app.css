@@ -1,4 +1,4 @@
-/* DocBase: the look of the design mockups, plus the review form and the original-document viewer. */
+/* Medical Records: the look of the design mockups, plus the review form and the original-document viewer. */
 body{margin:0;font-family:Inter,system-ui,sans-serif;color:#1B2430;background:#F4F6F9}
 *{box-sizing:border-box}
 :focus-visible{outline:2px solid #2457D6;outline-offset:2px}

@@ -21,3 +21,9 @@ medical_records.catalog.yaml
 
 # Windows
 Thumbs.db
+*.duckdb
+*.duckdb.wal
+*.catalog.yaml
+*.tfstate*
+*.tfvars
+.terraform/

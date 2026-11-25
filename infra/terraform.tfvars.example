@@ -1,6 +1,6 @@
 # Copy to terraform.tfvars (git ignores it: it holds secrets) and fill it in.
 subscription_id    = "00000000-0000-0000-0000-000000000000"
-image              = "ghcr.io/OWNER/docbase:latest"
+image              = "ghcr.io/OWNER/medical-records:latest"
 users              = "maria:salt$hash,luis:salt$hash"
 llm_base_url       = "https://RESOURCE.services.ai.azure.com/openai/v1"
 llm_api_key        = "..."

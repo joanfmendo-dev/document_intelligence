@@ -14,6 +14,7 @@ dependencies = [
   "pillow>=10",
   "numpy",
   "litellm>=1.50",
+  "tenacity>=8",  # litellm needs it for num_retries (llm.py retries cloud models); without it every call fails
   "rapidocr>=3.0",
   "onnxruntime>=1.17",  # rapidocr does not declare a runtime backend itself
   "duckdb>=1.0",

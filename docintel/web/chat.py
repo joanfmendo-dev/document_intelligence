@@ -1,5 +1,5 @@
 """The copilot conversations, kept on the server (one per browser session) so that they survive a visit to another page.
-They live in memory: restarting DocBase starts empty, and nothing about a patient is written to disk by the chat."""
+They live in memory: restarting Medical Records starts empty, and nothing about a patient is written to disk by the chat."""
 from __future__ import annotations
 
 import secrets
@@ -7,7 +7,7 @@ from collections import OrderedDict
 from threading import Lock
 
 MAX_TURNS_KEPT = 50      # per conversation: the oldest turns are dropped
-MAX_CONVERSATIONS = 20   # DocBase is a local app: a few browsers at most
+MAX_CONVERSATIONS = 20   # Medical Records is a local app: a few browsers at most
 
 
 class ChatStore:

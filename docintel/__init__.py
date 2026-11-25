@@ -1,10 +1,10 @@
-"""docintel: document extraction, the record database, the DocBase web app, the copilot and its evaluation.
+"""docintel: document extraction, the record database, the Medical Records web app, the copilot and its evaluation.
 
 Components (one folder each):
   shared      settings, LLM and embedding clients
   extraction  text extraction (digital / OCR / VLM / auto) and get_fields
   database    RecordDB (DuckDB), ICD-10 coding, embeddings
-  web         the DocBase web app
+  web         the Medical Records web app
   copilot     the read-only assistant that searches the records
   evaluation  execution accuracy and LLM-as-a-judge for the copilot
 """

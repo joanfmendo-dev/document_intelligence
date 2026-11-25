@@ -14,10 +14,10 @@ from .executor import Result
 from .plan import Query
 
 OUT_OF_SCOPE = {
-    "write": "I can only read the records. To add, change or delete a record, use the Upload and Records pages of DocBase.",
+    "write": "I can only read the records. To add, change or delete a record, use the Upload and Records pages of this app.",
     "export": "I cannot export results yet. I can take you to the Records page, where you can filter the list.",
     "clinical_advice": "I help find information in the records. I cannot give medical advice or interpret results for a patient.",
-    "unrelated": "I can only help with the medical records in DocBase: searching them, counting them, and taking you to the right page.",
+    "unrelated": "I can only help with the medical records in this app: searching them, counting them, and taking you to the right page.",
 }
 HELP = {
     "capabilities": ("I can search the records (by department, sex, insurance, city, age, dates, diagnosis, ICD-10, lab results and vital signs, "

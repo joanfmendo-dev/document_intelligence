@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{% block title %}DocBase{% endblock %}</title>
+<title>{% block title %}Medical Records{% endblock %}</title>
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}">
 {% block head %}{% endblock %}
 </head>
 <body>
-{% block nav %}<nav class="bar"><span class="logo">DocBase</span><a href="/upload"{% if active == 'upload' %} class="on" aria-current="page"{% endif %}>Upload document</a><a href="/records"{% if active == 'records' %} class="on" aria-current="page"{% endif %}>Database</a><a href="/copilot"{% if active == 'copilot' %} class="on" aria-current="page"{% endif %}>Ask the copilot</a>{% if user %}<form class="signout" method="post" action="/logout"><span>{{ user }}</span><button type="submit">Sign out</button></form>{% endif %}</nav>{% endblock %}
+{% block nav %}<nav class="bar"><span class="logo">Medical Records</span><a href="/upload"{% if active == 'upload' %} class="on" aria-current="page"{% endif %}>Upload document</a><a href="/records"{% if active == 'records' %} class="on" aria-current="page"{% endif %}>Database</a><a href="/copilot"{% if active == 'copilot' %} class="on" aria-current="page"{% endif %}>Ask the copilot</a>{% if user %}<form class="signout" method="post" action="/logout"><span>{{ user }}</span><button type="submit">Sign out</button></form>{% endif %}</nav>{% endblock %}
 <main class="wrap{% block wide %}{% endblock %}"{% block main_attrs %}{% endblock %}>
 {% if flash %}<p class="ok" role="status">{{ flash }}</p>{% endif %}
 {% block content %}{% endblock %}

@@ -15,12 +15,12 @@ from fastapi import APIRouter
 from fastapi.responses import PlainTextResponse, RedirectResponse
 from starlette.requests import Request
 
-COOKIE = "docbase_session"
+COOKIE = "medical_records_session"
 OPEN_PATHS = ("/login", "/static/", "/healthz")  # reachable without signing in
 MAX_FAILURES, LOCK_SECONDS = 5, 300  # 5 wrong passwords for one user lock that user for 5 minutes
 
 
-NO_USERS = ("DocBase asks everybody to sign in, and no users are configured.\n"
+NO_USERS = ("Medical Records asks everybody to sign in, and no users are configured.\n"
             "  1. python -m docintel.web.passwd maria        (asks for the password and saves maria, hashed, in config.json)\n"
             "  2. start the app again\n"
             "(Servers can use the USERS variable instead: 'maria:<hash>,luis:<hash>'.)")

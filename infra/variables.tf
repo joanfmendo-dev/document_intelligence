@@ -1,3 +1,9 @@
+variable "project" {
+  type        = string
+  default     = "medical-records"
+  description = "name that every Azure resource is derived from: rg-<project>, ca-<project>, cae-<project>, log-<project>, st<project without hyphens><4 characters>"
+}
+
 variable "subscription_id" {
   type = string
 }
@@ -9,7 +15,7 @@ variable "location" {
 
 variable "image" {
   type        = string
-  description = "e.g. ghcr.io/<owner>/docbase:latest (public repository: no registry credentials needed)"
+  description = "e.g. ghcr.io/<owner>/medical-records:latest (public repository: no registry credentials needed)"
 }
 
 variable "users" {

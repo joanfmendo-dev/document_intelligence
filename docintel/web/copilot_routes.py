@@ -13,7 +13,7 @@ from ..copilot.planner import MAX_TURNS
 from .site import Site, go, read_form
 
 MAX_QUESTION = 500
-COOKIE = "docbase_chat"
+COOKIE = "medical_records_chat"
 KEEPS_THE_PLAN = ("clarify", "error", "out_of_scope", "help", "navigate")  # these keep the earlier plan for the next message
 EXAMPLES = ("Patients over 60 in Cardiology this year", "How many records per department?", "Who came in with trouble breathing at night?",
             "Average heart rate for patients with chest pain")

@@ -33,5 +33,5 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/docbase:latest
-            ghcr.io/${{ github.repository_owner }}/docbase:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/medical-records:latest
+            ghcr.io/${{ github.repository_owner }}/medical-records:${{ github.sha }}
