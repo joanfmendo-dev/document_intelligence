@@ -12,6 +12,15 @@ from ..database.records import record_template
 from ..shared.settings import s
 
 
+# The page header repeats words the fields also use ("Record No. X", "Department of Medical Records"); the values are in the patient table.
+INSTRUCTIONS = (
+    "- record_id: the identifier alone, without its label. A header may say 'Record No. X': the value is X.\n"
+    "- department: the clinical department or unit of the encounter (e.g. Cardiology, Intensive Care Unit), taken from the "
+    "DEPARTMENT field of the patient details. The header line 'Department of Medical Records' is the hospital's own office, "
+    "never the department of the encounter."
+)
+
+
 @dataclass
 class Extraction:
     fields: dict
@@ -33,7 +42,7 @@ def run(path: Path, on_step: Callable[[str], None]) -> Extraction:
     if not document["text"].strip():
         raise ValueError("No text was found in the document. Is it blank, or is the image unreadable?")
     on_step("extracting")
-    fields = get_fields(document["text"], record_template())
+    fields = get_fields(document["text"], record_template(), INSTRUCTIONS)
     ungrounded = find_ungrounded(fields, document["text"])  # before coding: the ICD-10 fields are derived, not read from the document
     on_step("coding")
     notice = ""
