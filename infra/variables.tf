@@ -26,7 +26,7 @@ variable "users" {
 
 variable "llm_model" {
   type    = string
-  default = "azure_ai/gpt-5-nano-1"
+  default = "openai/gpt-5-nano-1" # not azure_ai/: for a *.services.ai.azure.com address litellm sends azure_ai/ to /models/chat/completions (404 with /openai/v1)
 }
 
 variable "llm_base_url" {

@@ -151,7 +151,7 @@ def get_fields(
     json_format: dict,
     instructions: str = "",
     llm: LLM | None = None,
-    max_tokens: int = 2048,
+    max_tokens: int | None = None,  # no cap by default: a model that reasons first (gpt-5, Gemma 4) spends them thinking and a cap leaves it no room to answer
     max_retries: int = 1,
 ) -> dict:
     """Extract the fields of `json_format` from `text` with an LLM.
@@ -182,13 +182,14 @@ def get_fields(
                        "json_schema": {"name": "fields", "schema": _schema(json_format), "strict": True}}
 
     for attempt in range(max(max_retries, 0) + 1):
-        done = llm.complete(messages, temperature=0, max_tokens=max_tokens, response_format=response_format)
+        limit = {} if max_tokens is None else {"max_tokens": max_tokens}
+        done = llm.complete(messages, temperature=0, response_format=response_format, **limit)
         try:
             data = _parse_json(done.text)
             break
         except ValueError as exc:  # includes json.JSONDecodeError
             if attempt >= max_retries:
-                cut = " The output hit max_tokens: raise it." if done.finish_reason == "length" else ""
+                cut = " The output was cut off (max_tokens: leave room for a model that reasons before it answers, or do not set it)." if done.finish_reason == "length" else ""
                 raise ValueError(f"The model did not return valid JSON after {attempt + 1} attempt(s) ({exc}).{cut}") from exc
             messages += [{"role": "assistant", "content": done.text},
                          {"role": "user", "content": "That was not valid JSON. Reply again with ONLY the JSON object."}]

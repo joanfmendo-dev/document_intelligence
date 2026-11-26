@@ -332,5 +332,5 @@ def _draft_description(llm: Any, name: str, col: Column) -> str:
     sample = ", ".join(list((col.values or {}))[:8])
     reply = llm.run([{"role": "user", "content": f"Write one short English sentence describing the database column '{name}' "
                       f"(role: {col.role}{'; example values: ' + sample if sample else ''}). Reply with the sentence only."}],
-                    temperature=0, max_tokens=60)
+                    temperature=0)  # no max_tokens: a model that reasons first would have none left to answer
     return reply.strip().splitlines()[0][:200] if reply.strip() else name
